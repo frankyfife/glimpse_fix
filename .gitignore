@@ -1,0 +1,14 @@
+# build output
+build/
+*.obj
+*.exe
+*.exp
+*.lib
+*.pdb
+# never commit game data: decrypted dumps, Ghidra database, screenshots, recordings
+re/
+ghidra/
+shots/
+*.log
+*.wav
+dist/
