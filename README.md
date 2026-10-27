@@ -1,6 +1,6 @@
 # glimpse_fix — Split/Second PC fix
 
-A drop-in `dinput8.dll` for the PC version of **Split/Second** (Disney / Black Rock, 2010) that
+A drop-in `dinput8.dll` for the **Steam** PC version of **Split/Second** (Disney / Black Rock, 2010) that
 adds what the port never had:
 
 * **Proper controller support** for every XInput pad (Xbox 360/One/Series, 8BitDo, Steam Input,
@@ -14,7 +14,12 @@ adds what the port never had:
 No game files are modified at runtime; everything is patched in memory after checking the
 expected bytes. You need your own copy of the game.
 
-Tested with the Steam release (`SplitSecond.exe` 1.0.0.1, app 297860) on Windows 11.
+> **Compatibility: Steam version only.** Developed and tested exclusively with the Steam release
+> (`SplitSecond.exe` 1.0.0.1, app 297860) on Windows 11. The retail DVD version
+> (Split/Second: Velocity), other regions and any other release have **not** been tested. All
+> addresses come from the Steam executable; on a different exe the byte checks fail and the
+> game-specific patches (60 fps, streaming pool, prompt icons, trigger preset) switch themselves
+> off, and whether the rest works there is unknown.
 
 ## Install
 
