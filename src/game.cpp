@@ -14,7 +14,7 @@ enum { SRC_BUTTON = 0, SRC_AXIS = 1, SRC_POV = 2 };
 enum { AXIS_ZPOS = 4, AXIS_ZNEG = 5, AXIS_RZPOS = 10 };
 enum { ACTION_THROTTLE = 0x29, ACTION_BRAKE = 0x2A };
 
-static bool BytesMatch(const void* at, const char* hex)
+bool BytesMatch(const void* at, const char* hex)
 {
     const BYTE* p = (const BYTE*)at;
     __try {
@@ -28,7 +28,7 @@ static bool BytesMatch(const void* at, const char* hex)
     return true;
 }
 
-static void WriteMemory(void* at, const void* src, size_t len)
+void WriteMemory(void* at, const void* src, size_t len)
 {
     DWORD old;
     VirtualProtect(at, len, PAGE_EXECUTE_READWRITE, &old);
@@ -118,6 +118,27 @@ static void RaiseStreamPool()
     }
     *kStreamPoolMB = g_cfg.streamPoolMB;
     Log("stream pool 57 -> %d MB", g_cfg.streamPoolMB);
+}
+
+// ---------------------------------------------------------------- powerplay icon size
+
+// When the HUD loads its parameters (0x4C9AF0) the PC port multiplies the powerplay icon scales by
+// screen width / 1280, but the icon renderer (0x55E740) already sizes icons by the screen width.
+// Above 1280 pixels the icons grow twice: 1.5x at 1080p, 3x at 4K. Loading 1280.0 (0xBB847C)
+// instead of the width makes that factor 1, as on the console.
+static BYTE* const kIconScaleWidth = (BYTE*)0x004C9E18;  // fild dword ptr [edi+2B0h]
+
+static void FixPowerplayIconSize()
+{
+    if (!g_cfg.fixIconSize) return;
+    if (!BytesMatch(kIconScaleWidth, "DB87B0020000") || !BytesMatch(kIconScaleWidth + 0x24, "D905FCA8BA00") ||
+        *(float*)0x00BB847C != 1280.0f) {
+        Log("powerplay icon scale code not recognised");
+        return;
+    }
+    static const BYTE fld1280[6] = { 0xD9, 0x05, 0x7C, 0x84, 0xBB, 0x00 };  // fld dword ptr [0BB847Ch]
+    WriteMemory(kIconScaleWidth, fld1280, sizeof(fld1280));
+    Log("powerplay icon size fixed");
 }
 
 // ---------------------------------------------------------------- rumble
@@ -229,7 +250,7 @@ static void __fastcall Hook_PromptBarSetButtons(void* self, void*, const char* b
 
 // Jumps from 'at' to 'hook'; returns a trampoline that runs the 'len' displaced bytes (whole
 // instructions without relative operands) and continues behind them.
-static void* Detour(BYTE* at, int len, void* hook)
+void* Detour(BYTE* at, int len, void* hook)
 {
     BYTE* tramp = (BYTE*)VirtualAlloc(NULL, 32, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
     if (!tramp) return NULL;
@@ -376,6 +397,8 @@ void ApplyGamePatches()
     if (g_cfg.glyphs != GLYPHS_KEYBOARD) HookTitleText();
     PatchFrameRate();
     RaiseStreamPool();
+    FixPowerplayIconSize();
+    PatchMotionBlur();
     if (g_cfg.profile) InstallProfiler();
     if (g_cfg.log) InstallAudioDiagnostics();
 }

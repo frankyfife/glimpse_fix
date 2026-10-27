@@ -1,7 +1,7 @@
 #!/bin/sh
 # in-game capture n (TestFeed=1, Log=1) -> shots/ig<n>.jpg and shots/ig<n>_s.png (1/3 size)
 # usage: tools/ishot.sh <n>    (GAME_DIR overrides the default Steam path)
-P=$(cd "$(dirname "$0")/.." && pwd)
+P=$(cd "$(dirname "$0")/.." && pwd -W)
 G=${GAME_DIR:-G:/SteamLibrary/steamapps/common/SplitSecond}
 rm -f "$G/SplitSecondPad_shot$1.jpg"
 echo "shot $1" >> "$P/re/padcmd.txt"

@@ -2,7 +2,7 @@
 # Rebuilds, installs the DLL with test settings, starts the game and drives the virtual pad into a quick race.
 # usage: tools/test_race.sh "<extra [Controller] ini line>" ["<extra [Game] ini line>"]
 # (GAME_DIR overrides the default Steam path)
-P=$(cd "$(dirname "$0")/.." && pwd)
+P=$(cd "$(dirname "$0")/.." && pwd -W)
 G=${GAME_DIR:-G:/SteamLibrary/steamapps/common/SplitSecond}
 mkdir -p $P/re
 powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"Name='SplitSecond.exe' or Name='WerFault.exe'\" | ForEach-Object { Stop-Process -Id \$_.ProcessId -Force -ErrorAction SilentlyContinue }"

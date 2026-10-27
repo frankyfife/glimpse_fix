@@ -82,6 +82,12 @@ static void LoadConfig()
         s_log = _fsopen(path, "w", _SH_DENYWR);
     }
     g_cfg.streamPoolMB = GetPrivateProfileIntA("Game", "StreamPoolMB", 512, ini);
+    g_cfg.fixIconSize = GetPrivateProfileIntA("Game", "FixPowerplayIconSize", 1, ini) != 0;
+    {
+        char buf[32];
+        GetPrivateProfileStringA("Game", "MotionBlurStrength", "1.0", buf, sizeof(buf), ini);
+        g_cfg.motionBlurStrength = (float)atof(buf);
+    }
     Log("frame rate %d, stream pool %d MB", g_cfg.frameRate, g_cfg.streamPoolMB);
     Log("config: pads=%d hide=%d triggers=%d stickdz=%.2f trigdz=%.2f rumble=%.2f glyphs=%d",
         g_cfg.virtualPads, g_cfg.hideXInputDevices, g_cfg.separateTriggers, g_cfg.stickDeadzone,

@@ -21,6 +21,8 @@ struct Config {
     bool  profile;           // count calls of timing-relevant game functions (development)
     int   frameRate;         // 30 (stock) or 60
     int   streamPoolMB;      // sector streaming pool, 0 = stock (57 MB)
+    bool  fixIconSize;       // undo the double resolution scaling of the powerplay icons
+    float motionBlurStrength; // multiplier on top of the 60 fps compensation
 };
 
 // Shared memory layout for TestFeed=1, mapping name kTestFeedName
@@ -64,7 +66,13 @@ void PatchFrameRate();
 void InstallProfiler();
 void ProfilerTick();
 
+// postfx.cpp
+void PatchMotionBlur();
+
 // game.cpp
+bool BytesMatch(const void* at, const char* hex);     // hex string, no spaces
+void WriteMemory(void* at, const void* src, size_t len);
+void* Detour(BYTE* at, int len, void* hook);         // returns the trampoline
 void ApplyGamePatches();
 void PatchPadNames();
 void OnInputFrame();       // called from the virtual device poll, on the game thread
