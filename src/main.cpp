@@ -87,6 +87,22 @@ static void LoadConfig()
         char buf[32];
         GetPrivateProfileStringA("Game", "MotionBlurStrength", "1.0", buf, sizeof(buf), ini);
         g_cfg.motionBlurStrength = (float)atof(buf);
+        GetPrivateProfileStringA("Game", "RenderScale", "auto", buf, sizeof(buf), ini);
+        float rs = (float)atof(buf);  // "auto" reads as 0
+        g_cfg.renderScale = rs <= 0 ? 0 : rs < 0.5f ? 0.5f : rs > 4.0f ? 4.0f : rs;
+        GetPrivateProfileStringA("Game", "LodDistanceScale", "2.0", buf, sizeof(buf), ini);
+        float lod = (float)atof(buf);
+        g_cfg.lodDistanceScale = lod < 0.5f ? 1.0f : lod > 8.0f ? 8.0f : lod;
+    }
+    g_cfg.vignette = GetPrivateProfileIntA("Game", "Vignette", 0, ini) != 0;
+    g_cfg.popInFix = GetPrivateProfileIntA("Game", "PopInFix", 1, ini) != 0;
+    g_cfg.anisotropy = GetPrivateProfileIntA("Game", "Anisotropy", 16, ini);
+    if (g_cfg.anisotropy > 16) g_cfg.anisotropy = 16;
+    {
+        char buf[32];
+        GetPrivateProfileStringA("Debug", "PatchMask", "0xFFFF", buf, sizeof(buf), ini);
+        g_cfg.patchMask = strtoul(buf, NULL, 0);
+        if (g_cfg.patchMask != PATCH_ALL) Log("patch mask 0x%X", g_cfg.patchMask);
     }
     Log("frame rate %d, stream pool %d MB", g_cfg.frameRate, g_cfg.streamPoolMB);
     Log("config: pads=%d hide=%d triggers=%d stickdz=%.2f trigdz=%.2f rumble=%.2f glyphs=%d",
@@ -183,7 +199,7 @@ BOOL WINAPI DllMain(HINSTANCE inst, DWORD reason, LPVOID)
         DisableThreadLibraryCalls(inst);
         InitializeCriticalSection(&s_logLock);
         LoadConfig();
-        if (g_cfg.log) InstallD3DDiagnostics();
+        if ((g_cfg.log || g_cfg.anisotropy > 1) && (g_cfg.patchMask & PATCH_D3D)) InstallD3DHooks();
     }
     return TRUE;
 }

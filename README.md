@@ -10,9 +10,14 @@ adds what the port never had:
   at 30 fps
 * **No more blurry, grey or missing world textures and props**: a larger streaming pool (needs the
   large address aware flag, a tool for that is included)
+* **No pop-in of buildings beside the track**, longer LOD, streaming, particle and powerplay
+  distances
+* Powerplay icons at console size on high resolutions, motion blur matched to 60 fps, optional
+  vignette, anisotropic filtering, internal render resolution independent of the quality option
 
 No game files are modified at runtime; everything is patched in memory after checking the
-expected bytes. You need your own copy of the game.
+expected bytes. The game's copy protection (SecuROM) stays fully in place, see
+[Copy protection](#copy-protection). You need your own copy of the game.
 
 > **Compatibility: Steam version only.** Developed and tested exclusively with the Steam release
 > (`SplitSecond.exe` 1.0.0.1, app 297860) on Windows 11. The retail DVD version
@@ -75,6 +80,63 @@ process has 2 GB of address space, and at 4K only about 500 MB of it is left, so
 only grow with the flag set.
 
 * With the flag, the pool is raised to 512 MB (configurable). Without it, the pool stays stock.
+  Levels write their own value into the pool tweakable before the pool is created, so the one
+  read of it takes the larger of the level's value and the configured one.
+
+### Pop-in
+
+Every track sector carries a precomputed visibility list, and buildings or props that are not
+on the current sector's list are skipped, whatever their distance. Crossing a sector border makes
+large halls and terminals beside the track appear at once. The game still has the debug switches
+that turn these lists off (`Sectors/Visibility/Disable Powerplay Visibility`,
+`Disable Sector Visibility`, `Disable Visibility Map`); with `PopInFix=1` they are set, and the
+streaming distance, LOD distances and the view frustum decide what is drawn.
+
+`LodDistanceScale` multiplies the high/mid environment LOD distances, sector and entity streaming
+distances, particle and debris distances and the per-level powerplay asset distances. The low LOD
+hand-over to each level's backdrop models stays as the level sets it, since moving it makes both
+draw at once.
+
+### Other image fixes
+
+* **Powerplay icons:** the port multiplies their scale by width / 1280 on top of the renderer's
+  own width scaling (1.5x too big at 1080p, 3x at 4K); the loaded scales are divided back.
+* **Motion blur:** it blurs along one frame of camera motion, which at 60 fps is half as much;
+  the amount is doubled. `MotionBlurStrength` scales it further.
+* **Vignette:** the race cameras darken the screen edges in the grading pass; `Vignette=0` sets
+  the vignette's U/V scale to 0 for that pass, grading and gradient stay.
+* **Anisotropic filtering:** the game filters all textures linearly; mipmapped textures that are
+  not render targets get anisotropic filtering.
+* **RenderScale:** "Very High" is exactly "High" plus 2x supersampling. The factor can be set
+  independently of the quality option.
+
+## Copy protection
+
+The Steam executable is protected with SecuROM, which decrypts the game at runtime and runs parts
+of it in its own virtual machine. **This project does not remove, bypass or weaken it**; it is
+built to work alongside it.
+
+Why this matters: SecuROM periodically checks the integrity of parts of the game code. Patching
+code in those regions does not fail at once. From about four and a half minutes after launch its
+check threads (every ~22 s) stop releasing their VM contexts; once all ten are taken, everything
+that needs protected code waits forever. The music stops and the game hangs after the finish
+line. This is also the likely reason why earlier 60 fps patches and mods got a reputation for
+"breaking" the game.
+
+How the fix avoids it:
+
+* Code is patched only where the checks do not look: the main loop and the AI steering step
+  (60 fps) and the single read of the streaming pool size.
+* Everything else works without touching game code: values in the game's data (tweakables,
+  loaded HUD parameters, powerplay distance records, debug switches), swapped vtable slots for
+  the motion blur and grading passes, the import table entry of `XInputSetState`, the
+  read-only icon path strings of the prompt bar, the Direct3D device's vtable, and calls into the
+  game's own functions (dictionary lookup, Scaleform `Invoke`/`SetVariable`) from the input poll.
+* The prompt bar glyphs, the title screen text and the icon size were first done with code hooks
+  and set off exactly this hang, so they were rebuilt this way.
+* `[Debug] PatchMask` (bits as in `src/common.h`) switches individual patches off, to find out
+  which one causes a side effect. With `Log=1` the log also shows the number of SecuROM VM
+  contexts in use whenever it changes.
 
 ## SplitSecondPad.ini
 
@@ -91,6 +153,14 @@ only grow with the flag set.
 | `TestFeed`, `Profile` | 0 | Development only: pad state from shared memory (`tools/padfeed.py`), call counters. |
 | `[Game] FrameRate` | 60 | 30 = stock. |
 | `StreamPoolMB` | 512 | Streaming pool in MB, 0 = stock (57). Only used when the exe has the LAA flag. |
+| `FixPowerplayIconSize` | 1 | Powerplay icons at console size at every resolution. 0 = stock. |
+| `MotionBlurStrength` | 1.0 | Motion blur multiplier on top of the 60 fps compensation. 0 = off. |
+| `RenderScale` | auto | Internal resolution factor 0.5–4.0; `auto` = 2.0 at Very High, 1.0 below. |
+| `Anisotropy` | 16 | Anisotropic filtering 2–16, 0 = stock (linear). |
+| `LodDistanceScale` | 2.0 | Multiplier for LOD, streaming, particle, debris and powerplay distances (0.5–8). |
+| `PopInFix` | 1 | Ignore the sectors' precomputed visibility lists. 0 = stock. |
+| `Vignette` | 0 | 1 = keep the cameras' darkened screen edges. |
+| `[Debug] PatchMask` | 0xFFFF | Development: bit mask of the patches that may be applied (`PATCH_*` in `src/common.h`). |
 
 ## Known limitations
 
@@ -98,6 +168,9 @@ only grow with the flag set.
   joystick (e.g. a wheel) is present, since those names are shared by all devices.
 * 60 fps: races, AI and physics were checked; not every power play and cutscene was. Set
   `FrameRate=30` if something looks off.
+* `RenderScale` other than `auto` patches code in the render target and HUD setup (nine places).
+  Leave it at `auto` if the game hangs after a few minutes with it set.
+* `PopInFix=1` draws somewhat more per frame than the stock visibility lists allow.
 * Audio: the game forces FMOD to DirectSound in 5.1. The LFE channel stays silent and the pause
   menu is completely silent; both are the game's own mix.
 
@@ -137,7 +210,12 @@ part of this repository.
 | `0x00CFA5E0` / `0x00CFA6E0` | JOY_AXIS_* / JOY_BUTTON_* name tables |
 | `0x00558880` | Main loop: measure frame time, accumulate ticks, `Update(ticks)`, `Render` |
 | `0x00BA0C14` | 1/30, shared by the main loop, the AI steering controller `0x524AC0`, AI look-ahead grids and data conversions |
-| `0x00D389E0` | Tweakable "Sectors/Streaming Memory Pool MB" (57), read on level load |
+| `0x00D389E0` | Tweakable "Sectors/Streaming Memory Pool MB" (57), read on level load (`0x7C654F`) |
+| `0x00D8B368`, `0x00D82788`, `0x00D9AFCC` | Disable Powerplay Visibility / Sector Visibility / Visibility Map |
+| `0x00D8B384` | Powerplay draw distance records (name +0x10, distance +0x90) |
+| `0x00D66B24` | HUD; parameters at +0x20, powerplay icon scales +0x214/+0x218 |
+| `0x00BB42B0`, `0x00BB4048` | vtable slots of the motion blur pass `0x49B490` and the grading/vignette pass `0x49A7A0` |
+| `0x01E0266A` | SecuROM VM context table (10 entries, +0x24 = `0x66666666` while in use) |
 | `0x00A15BF0` | Dictionary lookup, key → UTF-8 text |
 | `0x008674F0` | FMOD init: DirectSound, `setSpeakerMode(5POINT1)` |
 

@@ -1,5 +1,5 @@
-// Split/Second controller fix - logs Direct3D 9 device creation (Log=1 only), to tell
-// display problems apart from anything the input fix does
+// Split/Second PC fix - Direct3D 9 hooks: device creation log and back buffer capture (Log=1),
+// forced anisotropic filtering (Anisotropy=2..16)
 #include "common.h"
 #include <d3d9.h>
 #include <string.h>
@@ -14,6 +14,83 @@ static Direct3DCreate9_t s_origCreate9;
 static CreateDevice_t s_origCreateDevice;
 static Present_t s_origPresent;
 static BYTE s_create9Prologue[5];
+
+// ---------------------------------------------------------------- anisotropic filtering
+
+// MINFILTER LINEAR becomes ANISOTROPIC on pixel samplers that hold a mipmapped texture which is not
+// a render target or depth texture (shadow maps rely on plain linear filtering for PCF).
+typedef HRESULT(STDMETHODCALLTYPE* SetTexture_t)(IDirect3DDevice9*, DWORD, IDirect3DBaseTexture9*);
+typedef HRESULT(STDMETHODCALLTYPE* SetSamplerState_t)(IDirect3DDevice9*, DWORD, D3DSAMPLERSTATETYPE, DWORD);
+static SetTexture_t s_origSetTexture;
+static SetSamplerState_t s_origSetSamplerState;
+
+struct StageState {
+    IDirect3DBaseTexture9* tex;
+    bool eligible;
+    DWORD minFilter;  // as the game set it
+};
+static StageState s_stages[16];
+
+static bool Eligible(IDirect3DBaseTexture9* t)
+{
+    if (!t || t->GetLevelCount() < 2) return false;
+    D3DSURFACE_DESC d;
+    D3DRESOURCETYPE type = t->GetType();
+    if (type == D3DRTYPE_TEXTURE) {
+        if (FAILED(((IDirect3DTexture9*)t)->GetLevelDesc(0, &d))) return false;
+    } else if (type == D3DRTYPE_CUBETEXTURE) {
+        if (FAILED(((IDirect3DCubeTexture9*)t)->GetLevelDesc(0, &d))) return false;
+    } else {
+        return false;
+    }
+    return !(d.Usage & (D3DUSAGE_RENDERTARGET | D3DUSAGE_DEPTHSTENCIL));
+}
+
+static void ApplyFilter(IDirect3DDevice9* dev, DWORD stage)
+{
+    StageState& s = s_stages[stage];
+    bool aniso = s.eligible && s.minFilter == D3DTEXF_LINEAR;
+    s_origSetSamplerState(dev, stage, D3DSAMP_MINFILTER, aniso ? D3DTEXF_ANISOTROPIC : s.minFilter);
+    if (aniso) s_origSetSamplerState(dev, stage, D3DSAMP_MAXANISOTROPY, (DWORD)g_cfg.anisotropy);
+}
+
+static HRESULT STDMETHODCALLTYPE Hook_SetTexture(IDirect3DDevice9* dev, DWORD stage, IDirect3DBaseTexture9* tex)
+{
+    HRESULT hr = s_origSetTexture(dev, stage, tex);
+    if (stage < 16 && tex != s_stages[stage].tex) {
+        s_stages[stage].tex = tex;
+        bool eligible = Eligible(tex);
+        if (eligible != s_stages[stage].eligible) {
+            s_stages[stage].eligible = eligible;
+            if (s_stages[stage].minFilter == D3DTEXF_LINEAR) ApplyFilter(dev, stage);
+        }
+    }
+    return hr;
+}
+
+static HRESULT STDMETHODCALLTYPE Hook_SetSamplerState(IDirect3DDevice9* dev, DWORD stage, D3DSAMPLERSTATETYPE type, DWORD value)
+{
+    if (stage < 16 && type == D3DSAMP_MINFILTER) {
+        s_stages[stage].minFilter = value;
+        ApplyFilter(dev, stage);
+        return D3D_OK;
+    }
+    if (stage < 16 && type == D3DSAMP_MAXANISOTROPY && s_stages[stage].eligible && value < (DWORD)g_cfg.anisotropy)
+        value = (DWORD)g_cfg.anisotropy;
+    return s_origSetSamplerState(dev, stage, type, value);
+}
+
+static void PatchVtable(void** vt, int index, void* hook, void** orig)
+{
+    if (*orig) return;
+    *orig = vt[index];
+    DWORD old;
+    VirtualProtect(&vt[index], sizeof(void*), PAGE_EXECUTE_READWRITE, &old);
+    vt[index] = hook;
+    VirtualProtect(&vt[index], sizeof(void*), old, &old);
+}
+
+// ---------------------------------------------------------------- capture and log
 
 // test feed: save the back buffer as JPG next to the game on request (exclusive fullscreen
 // defeats desktop capture)
@@ -72,12 +149,11 @@ static HRESULT STDMETHODCALLTYPE Diag_CreateDevice(IDirect3D9* d3d, UINT adapter
     if (SUCCEEDED(hr) && out && *out) {
         Log("available texture memory %u MB", (*out)->GetAvailableTextureMem() >> 20);
         void** vt = *(void***)*out;
-        if (!s_origPresent) {
-            s_origPresent = (Present_t)vt[17];
-            DWORD old;
-            VirtualProtect(&vt[17], sizeof(void*), PAGE_EXECUTE_READWRITE, &old);
-            vt[17] = (void*)Diag_Present;
-            VirtualProtect(&vt[17], sizeof(void*), old, &old);
+        if (g_cfg.log) PatchVtable(vt, 17, (void*)Diag_Present, (void**)&s_origPresent);
+        if (g_cfg.anisotropy > 1) {
+            PatchVtable(vt, 65, (void*)Hook_SetTexture, (void**)&s_origSetTexture);
+            PatchVtable(vt, 69, (void*)Hook_SetSamplerState, (void**)&s_origSetSamplerState);
+            Log("anisotropic filtering %dx", g_cfg.anisotropy);
         }
     }
     return hr;
@@ -111,7 +187,7 @@ static IDirect3D9* WINAPI Diag_Direct3DCreate9(UINT sdk)
     return d3d;
 }
 
-void InstallD3DDiagnostics()
+void InstallD3DHooks()
 {
     HMODULE d3d9 = GetModuleHandleA("d3d9.dll");
     if (!d3d9) d3d9 = LoadLibraryA("d3d9.dll");
