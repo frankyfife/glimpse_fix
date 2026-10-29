@@ -149,6 +149,22 @@ static void RaiseStreamPool()
 // SecuROM's integrity checks (they stop freeing their VM contexts and the game hangs minutes later).
 static void* const* const kHud = (void* const*)0x00D66B24;  // HUD, its parameter block at +0x20
 
+// The route change markers (red and blue arrows, two slots drawn by 0x4C7910) pass width * 2.25/1280
+// as their size to the same renderer, so they grow with the width squared. The factor is a constant
+// only this code reads (0xBB8494); it is set to 2.25 / width, which gives the console's 2.25.
+static float* const kRouteMarkerScale = (float*)0x00BB8494;
+
+static void FixRouteMarkerSize(int width)
+{
+    static int s_width;
+    static bool s_known = *kRouteMarkerScale == 2.25f / 1280.0f;
+    if (!s_known || width == s_width) return;
+    s_width = width;
+    float scale = 2.25f / width;
+    WriteMemory(kRouteMarkerScale, &scale, sizeof(scale));
+    Log("route marker scale for width %d", width);
+}
+
 static void FixPowerplayIconSize()
 {
     static BYTE* s_params;
@@ -159,6 +175,7 @@ static void FixPowerplayIconSize()
     float* scales = (float*)(p + 0x214);  // +0x214, +0x218
     int width = *(int*)(p + 0x2B0);
     if (width <= 0) return;
+    FixRouteMarkerSize(width);
     if (p == s_params && scales[0] == s_written[0] && scales[1] == s_written[1]) return;  // done
     float factor = width / 1280.0f;
     s_params = p;

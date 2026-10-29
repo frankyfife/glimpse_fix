@@ -101,6 +101,8 @@ draw at once.
 
 * **Powerplay icons:** the port multiplies their scale by width / 1280 on top of the renderer's
   own width scaling (1.5x too big at 1080p, 3x at 4K); the loaded scales are divided back.
+  The route change markers (red and blue arrows) get their size as width x 2.25/1280, a constant
+  only that code reads; it is set to 2.25 / width.
 * **Motion blur:** it blurs along one frame of camera motion, which at 60 fps is half as much;
   the amount is doubled. `MotionBlurStrength` scales it further.
 * **Vignette:** the race cameras darken the screen edges in the grading pass; `Vignette=0` sets
@@ -153,7 +155,7 @@ How the fix avoids it:
 | `TestFeed`, `Profile` | 0 | Development only: pad state from shared memory (`tools/padfeed.py`), call counters. |
 | `[Game] FrameRate` | 60 | 30 = stock. |
 | `StreamPoolMB` | 512 | Streaming pool in MB, 0 = stock (57). Only used when the exe has the LAA flag. |
-| `FixPowerplayIconSize` | 1 | Powerplay icons at console size at every resolution. 0 = stock. |
+| `FixPowerplayIconSize` | 1 | Powerplay icons and route change markers at console size at every resolution. 0 = stock. |
 | `MotionBlurStrength` | 1.0 | Motion blur multiplier on top of the 60 fps compensation. 0 = off. |
 | `RenderScale` | auto | Internal resolution factor 0.5–4.0; `auto` = 2.0 at Very High, 1.0 below. |
 | `Anisotropy` | 16 | Anisotropic filtering 2–16, 0 = stock (linear). |
@@ -214,6 +216,7 @@ part of this repository.
 | `0x00D8B368`, `0x00D82788`, `0x00D9AFCC` | Disable Powerplay Visibility / Sector Visibility / Visibility Map |
 | `0x00D8B384` | Powerplay draw distance records (name +0x10, distance +0x90) |
 | `0x00D66B24` | HUD; parameters at +0x20, powerplay icon scales +0x214/+0x218 |
+| `0x00BB8494` | Route change marker size factor 2.25/1280 (read only by `0x4C7910`) |
 | `0x00BB42B0`, `0x00BB4048` | vtable slots of the motion blur pass `0x49B490` and the grading/vignette pass `0x49A7A0` |
 | `0x01E0266A` | SecuROM VM context table (10 entries, +0x24 = `0x66666666` while in use) |
 | `0x00A15BF0` | Dictionary lookup, key → UTF-8 text |
