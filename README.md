@@ -193,6 +193,7 @@ The one exception is `RenderScale` set to a number (see Known limitations).
 | `LodDistanceScale` | 2.0 | Multiplier for LOD, streaming, particle, debris and powerplay distances (0.5–8). |
 | `PopInFix` | 1 | Ignore the sectors' precomputed visibility lists. 0 = stock. |
 | `Vignette` | 0 | 1 = keep the cameras' darkened screen edges. |
+| `SkipIntro` | 0 | Boot movies at every start: 1 = skip the publisher logo, 2 = also the game intro. They end at once without decoding (the movie files stay untouched). 0 = stock. |
 | `UnlockAll` | 0 | 1 = all tracks, events, episodes, game modes and vehicles selectable (the game's own switches; the profile is not changed). |
 | `BonusContent` | 0 | 1 = the PC version's cheat code extras: Expressway track, Cobretti SlipStream, retailer branded cars, Euro livery pack. |
 | `Boost` | 0 | 1 = X held gives player 1 extra speed along the car's heading. |

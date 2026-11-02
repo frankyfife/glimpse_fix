@@ -320,6 +320,88 @@ static void HookRumble()
     Log("rumble hooked");
 }
 
+// ---------------------------------------------------------------- intro skip
+
+// The boot movies (data/movies/bootup: publisher logo, intro) are played with Bink through the import
+// table. With SkipIntro=1 they are opened normally (so Bink sets up its sound as usual) but never
+// waited for or decoded, so the game ends them at once, as when the player skips them. Replacing or
+// shortening the movie files instead made the engine sound choppy for the rest of the session.
+static void** const kIatBinkOpen = (void**)0x00B9B39C;
+static void** const kIatBinkWait = (void**)0x00B9B3B0;
+static void** const kIatBinkDoFrame = (void**)0x00B9B380;
+typedef void*(__stdcall* BinkOpen_t)(const char* name, unsigned flags);
+typedef int(__stdcall* BinkWait_t)(void* bink);
+typedef int(__stdcall* BinkDoFrame_t)(void* bink);
+static BinkDoFrame_t s_binkDoFrame;
+static BinkOpen_t s_binkOpen;
+static BinkWait_t s_binkWait;
+static void* s_skipped;  // the boot movie being skipped
+
+// the movie loop (0x57B4EA) waits with BinkWait until it is time for the next frame, measured from the
+// movie's start, so a movie sent to its last frame would still last as long as it plays; no waiting for it
+// The movie loop (0x57B4EA) waits with BinkWait for the next frame's time, decodes it with BinkDoFrame
+// and ends the movie when LastFrameNum == Frames. For a skipped boot movie it neither waits nor decodes:
+// the movie is marked as at its last frame, so the loop ends it on its first pass.
+static int __stdcall Hook_BinkWait(void* bink)
+{
+    return bink && bink == s_skipped ? 0 : s_binkWait(bink);
+}
+
+static int __stdcall Hook_BinkDoFrame(void* bink)
+{
+    if (!bink || bink != s_skipped) return s_binkDoFrame(bink);
+    unsigned* h = (unsigned*)bink;  // HBINK: Width, Height, Frames, FrameNum, LastFrameNum
+    h[3] = h[4] = h[2];
+    return 0;
+}
+
+static bool Contains(const char* s, const char* part)
+{
+    for (size_t n = strlen(part); *s; s++)
+        if (!_strnicmp(s, part, n)) return true;
+    return false;
+}
+
+// SkipIntro=1: the publisher logo (bootup/disbr.bik), 2: also the game intro (bootup/intro.bik)
+static bool IsBootMovie(const char* name)
+{
+    if (!Contains(name, "bootup")) return false;
+    return Contains(name, "disbr") ? g_cfg.skipIntro >= 1 : g_cfg.skipIntro >= 2;
+}
+
+static void* __stdcall Hook_BinkOpen(const char* name, unsigned flags)
+{
+    void* bink = s_binkOpen(name, flags);
+    if (bink == s_skipped) s_skipped = NULL;
+    if (bink && name && IsBootMovie(name)) {
+        s_skipped = bink;
+        Log("intro skip: %s (%u frames)", name, ((unsigned*)bink)[2]);
+    }
+    return bink;
+}
+
+static void HookIntroSkip()
+{
+    HMODULE bink = GetModuleHandleA("binkw32.dll");
+    void* open = bink ? (void*)GetProcAddress(bink, "_BinkOpen@8") : NULL;
+    void* wait = bink ? (void*)GetProcAddress(bink, "_BinkWait@4") : NULL;
+    void* doFrame = bink ? (void*)GetProcAddress(bink, "_BinkDoFrame@4") : NULL;
+    if (!open || !wait || !doFrame || *kIatBinkOpen != open || *kIatBinkWait != wait || *kIatBinkDoFrame != doFrame) {
+        Log("Bink imports not where expected, intro left as is");
+        return;
+    }
+    s_binkOpen = (BinkOpen_t)open;
+    s_binkWait = (BinkWait_t)wait;
+    s_binkDoFrame = (BinkDoFrame_t)doFrame;
+    void* hook = (void*)Hook_BinkOpen;
+    WriteMemory(kIatBinkOpen, &hook, sizeof(hook));
+    hook = (void*)Hook_BinkWait;
+    WriteMemory(kIatBinkWait, &hook, sizeof(hook));
+    hook = (void*)Hook_BinkDoFrame;
+    WriteMemory(kIatBinkDoFrame, &hook, sizeof(hook));
+    Log("intro skip on");
+}
+
 // ---------------------------------------------------------------- prompt bar glyphs
 
 // Scaleform GFxValue as laid out by this game's GFx build
@@ -658,6 +740,7 @@ void ApplyGamePatches()
     const unsigned mask = g_cfg.patchMask;
     if (g_cfg.separateTriggers && (mask & PATCH_TRIGGERS)) PatchTriggerPreset();
     if (mask & PATCH_RUMBLE) HookRumble();
+    if (g_cfg.skipIntro > 0 && (mask & PATCH_INTRO)) HookIntroSkip();
     if (mask & PATCH_PROMPTBAR) CheckPromptBar();
     if (g_cfg.glyphs != GLYPHS_KEYBOARD && (mask & PATCH_TITLETEXT)) CheckTitleText();
     if (mask & PATCH_FRAMERATE) PatchFrameRate();

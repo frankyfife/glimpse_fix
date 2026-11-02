@@ -96,6 +96,7 @@ static void LoadConfig()
     }
     g_cfg.vignette = GetPrivateProfileIntA("Game", "Vignette", 0, ini) != 0;
     g_cfg.popInFix = GetPrivateProfileIntA("Game", "PopInFix", 1, ini) != 0;
+    g_cfg.skipIntro = GetPrivateProfileIntA("Game", "SkipIntro", 0, ini);
     g_cfg.unlockAll = GetPrivateProfileIntA("Game", "UnlockAll", 0, ini) != 0;
     g_cfg.bonusContent = GetPrivateProfileIntA("Game", "BonusContent", 0, ini) != 0;
     g_cfg.boost = GetPrivateProfileIntA("Game", "Boost", 0, ini) != 0;
