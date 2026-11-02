@@ -128,8 +128,13 @@ static unsigned Random()
     return seed >> 8;
 }
 
+// Chaos mode also gives the AI an endless power bar: the game's own cheat switch
+// "SSAI/Debug Cheats/AI Full Power Bar" (0xD72534), read by every AI player update (0x51AC16).
+static BYTE* const kAiFullPowerBar = (BYTE*)0x00D72534;
+
 static void AiBoost(BYTE* logic, BYTE* player0, BYTE* body0, float dt)
 {
+    if (g_cfg.aiBoostChaos) *kAiFullPowerBar = 1;
     int count = *(int*)(logic + 0x18);
     int humans = *(int*)(logic + 0x58);
     if (humans < 1 || humans >= count) humans = 1;

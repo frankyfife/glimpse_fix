@@ -140,6 +140,7 @@ static void LoadConfig()
     // [Gameplay]
     g_cfg.unlockAll = IniBool("Gameplay", "UnlockAll", false);
     g_cfg.bonusContent = IniBool("Gameplay", "BonusContent", false);
+    g_cfg.skipIntro = IniInt("Gameplay", "SkipIntro", 0);
     g_cfg.boost = IniBool("Gameplay", "Boost", false);
     g_cfg.boostAcceleration = IniFloat("Gameplay", "BoostAcceleration", 15.0f, 1.0f, 100.0f);
     g_cfg.boostMaxSpeed = IniFloat("Gameplay", "BoostMaxSpeed", 90.0f, 10.0f, 200.0f);

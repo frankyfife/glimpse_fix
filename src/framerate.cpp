@@ -88,6 +88,19 @@ void FramePace()
 typedef void(__thiscall* AiUpdate_t)(void* self, void* a, void* b);
 static AiUpdate_t s_origAiUpdate;
 
+// An AI car's track cursor, read by its update and by another cAIPlayer method (vtable 0xBC0BF8, every
+// pass): [[[ai+0x18]]+0x28]+0x50, +4 = current track section. Restarting a race sets the section to NULL;
+// the next update finds it again. That update must not be the skipped one, or the other method reads
+// [NULL+4] and the game crashes (0xA463B6).
+static bool TrackSectionMissing(void* ai)
+{
+    BYTE* p = *(BYTE**)((BYTE*)ai + 0x18);
+    if (!p || IsBadReadPtr(p, 4) || !(p = *(BYTE**)p) || IsBadReadPtr(p + 0x28, 4)) return false;
+    p = *(BYTE**)(p + 0x28);
+    if (!p || IsBadReadPtr(p + 0x54, 4)) return false;
+    return *(void**)(p + 0x54) == NULL;  // cursor at +0x50, section at cursor +4
+}
+
 static void __fastcall Hook_AiUpdate(void* self, void*, void* a, void* b)
 {
     // per AI car: run every other call
@@ -103,7 +116,10 @@ static void __fastcall Hook_AiUpdate(void* self, void*, void* a, void* b)
     cars[i] = self;
     unsigned bit = 1u << i;
     skip ^= bit;
-    if (!(skip & bit)) return;
+    if (!(skip & bit)) {
+        if (!TrackSectionMissing(self)) return;
+        skip |= bit;  // race restarted: run now, the rhythm continues from here
+    }
     s_origAiUpdate(self, a, b);
 }
 
