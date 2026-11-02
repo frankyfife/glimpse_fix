@@ -28,7 +28,7 @@ Split/Second never had a boost. Now it does — and it feels like it belongs the
 | | What it does | INI |
 |---|---|---|
 | **Boost** | Hold **X** and your car surges forward along its heading, up to 324 km/h. The motion blur swells with it (3× by default) and eases off when you let go, so speed *feels* like speed. Works only while driving forward, never in the pause menu. | `Boost=1` |
-| **AI boost** *(experimental)* | The AI cars boost too, in bursts while they are behind you or not far ahead, so the field stays tight. Three levels from *easy* to *hard*, on the straights only or everywhere, and a **chaos mode** (`AIBoostChaos=1`) where every AI car boosts all the time and always has a full power play bar. Turn it off with one line if it misbehaves. | `AIBoost=1` |
+| **AI boost** *(experimental)* | The AI cars boost too, in bursts while they are behind you or not far ahead, so the field stays tight. Three levels from *easy* to *hard*, on the straights only or everywhere, and a **chaos mode** (`AIBoostChaos=1`) where every AI car boosts all the time, always has a full power play bar and drives at its highest skill. Turn it off with one line if it misbehaves. | `AIBoost=1` |
 | **Full Power Play bar** | Press **LS + RS** (both sticks) and the power play bar is full: drop a building on the leader whenever you like. | `PowerBarFill=1` |
 | **Everything unlocked** | All tracks, events, episodes, game modes and cars selectable from the start, using the game's own switches. Your profile is not changed; set it back to 0 and everything is as you earned it. | `UnlockAll=1` |
 | **Bonus content** | The extras the PC version hid behind cheat codes: the **Expressway** track, the Cobretti SlipStream, the retailer branded cars and the Euro livery pack. | `BonusContent=1` |
@@ -245,7 +245,7 @@ The file is split into sections. INIs from older versions with everything under 
 | `AIBoostLevel` | 2 | 1 easy (0.8× your boost, 3 s tank, up to 30 m ahead), 2 normal (1×, 5 s, about once a second, 60 m), 3 hard (1.3×, 8 s, almost constantly, 150 m). |
 | `AIBoostUnlimited` | 0 | 1 = the AI's boost tank never empties. |
 | `AIBoostStraightOnly` | 1 | 1 = AI boosts only on straights at speed, 0 = anywhere while driving forward. |
-| `AIBoostChaos` | 0 | 1 = chaos mode: level 3, endless tank, anywhere, also far ahead of you, and the AI's power play bar is always full. Overrides the three keys above while set. |
+| `AIBoostChaos` | 0 | 1 = chaos mode: level 3, endless tank, anywhere, also far ahead of you, the AI's power play bar is always full and the AI drives at its highest skill (no slowing down when ahead). Overrides the three keys above while set. |
 
 **[Debug]**
 

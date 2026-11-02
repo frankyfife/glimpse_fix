@@ -101,8 +101,29 @@ static bool TrackSectionMissing(void* ai)
     return *(void**)(p + 0x54) == NULL;  // cursor at +0x50, section at cursor +4
 }
 
+// Chaos mode: every AI car at the highest skill. The skill (0..1) of a cAIPlayer is at +0x24; the
+// update recomputes it from the car's base skill and a catch-up offset (0x527140), the vehicle copies
+// it (clamped) for steering and speed (0x4BEE50). The catch-up limits ("RaceSetup/DCB/AI Skill",
+// 0xD17044..) are set so that an AI car never loses skill for being ahead and gains up to 1 when
+// behind, and +0x24 is set to 1 around every update.
+static void MaxSkill(void* ai)
+{
+    *(float*)((BYTE*)ai + 0x24) = 1.0f;
+    float* limits = (float*)0x00D17044;  // initial min, -, initial max, -, final min, -, final max (8 bytes apart)
+    limits[0] = 0.0f;
+    limits[2] = 1.0f;
+    limits[4] = 0.0f;
+    limits[6] = 1.0f;
+}
+
 static void __fastcall Hook_AiUpdate(void* self, void*, void* a, void* b)
 {
+    if (g_cfg.aiBoost && g_cfg.aiBoostChaos && (g_cfg.patchMask & PATCH_AIBOOST)) MaxSkill(self);
+    if (!s_active) {  // 30 fps: every update runs
+        s_origAiUpdate(self, a, b);
+        if (g_cfg.aiBoost && g_cfg.aiBoostChaos && (g_cfg.patchMask & PATCH_AIBOOST)) MaxSkill(self);
+        return;
+    }
     // per AI car: run every other call
     static void* cars[16];
     static unsigned skip;  // bit i: car i skips its next call
@@ -121,10 +142,27 @@ static void __fastcall Hook_AiUpdate(void* self, void*, void* a, void* b)
         skip |= bit;  // race restarted: run now, the rhythm continues from here
     }
     s_origAiUpdate(self, a, b);
+    if (g_cfg.aiBoost && g_cfg.aiBoostChaos && (g_cfg.patchMask & PATCH_AIBOOST)) MaxSkill(self);
+}
+
+// the AI update hook, for the 30 Hz rhythm at 60 fps and for the chaos mode skill
+static bool HookAiUpdate()
+{
+    if (s_origAiUpdate) return true;
+    if (*kAiUpdateSlot != kAiUpdate || !Matches((DWORD)kAiUpdate, "83EC1053")) {
+        Log("AI update not recognised");
+        return false;
+    }
+    s_origAiUpdate = (AiUpdate_t)kAiUpdate;
+    void* hook = (void*)Hook_AiUpdate;
+    WriteMemory(kAiUpdateSlot, &hook, sizeof(hook));
+    return true;
 }
 
 void PatchFrameRate()
 {
+    if (g_cfg.aiBoost && g_cfg.aiBoostChaos && (g_cfg.patchMask & PATCH_AIBOOST) && HookAiUpdate())
+        Log("chaos mode: AI at the highest skill");
     if (g_cfg.frameRate != 60) return;
     // the loop must be the one described above
     if (!Matches(0x005588A9, "8B2DD899D100") || !Matches(0x005588B4, "F30F10052023D700F30F5805F447D700") ||
@@ -136,13 +174,10 @@ void PatchFrameRate()
         Log("60 fps needs the Direct3D hooks, frame rate left at 30");
         return;
     }
-    if (*kAiUpdateSlot != kAiUpdate || !Matches((DWORD)kAiUpdate, "83EC1053")) {
-        Log("AI update not recognised, frame rate left at 30");
+    if (!HookAiUpdate()) {
+        Log("frame rate left at 30");
         return;
     }
-    s_origAiUpdate = (AiUpdate_t)kAiUpdate;
-    void* hook = (void*)Hook_AiUpdate;
-    WriteMemory(kAiUpdateSlot, &hook, sizeof(hook));
     s_active = true;
     Log("60 fps: main loop paced after Present, AI updates at 30 Hz");
 }

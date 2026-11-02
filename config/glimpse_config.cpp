@@ -1,9 +1,9 @@
 // glimpse_fix - settings for SplitSecondPad.ini
 //
-// A plain Win32 program (static CRT, only Windows' own DLLs) that edits the INI next to it, or one picked
-// with the file dialog. Values are changed in place, so comments, order and unknown keys stay as they
-// are; a key that is missing is added to its section. Every change is saved at once: the bloom and
-// exposure values are read by the game every 2 s, everything else at the next start.
+// A plain Win32 program (static CRT, only Windows' own DLLs) with a dark look of its own. It edits the
+// INI next to it, or one picked with the file dialog. Values are changed in place, so comments, order and
+// unknown keys stay as they are; a key that is missing is added to its section. Every change is saved at
+// once: the bloom and exposure values are read by the game every 2 s, everything else at the next start.
 #define WIN32_LEAN_AND_MEAN
 #ifndef _CRT_SECURE_NO_WARNINGS
 #define _CRT_SECURE_NO_WARNINGS
@@ -80,7 +80,7 @@ static Option kOptions[] = {
     { "Gameplay", "AIBoostLevel", CHOICE, "  AI boost level", "Easy: now and then, up to 30 m ahead. Normal: about once a second, 60 m. Hard: almost constantly, 150 m.", "2", "1|Easy;2|Normal;3|Hard" },
     { "Gameplay", "AIBoostUnlimited", BOOL_OPT, "  Unlimited AI boost", "The AI's boost tank never empties.", "0" },
     { "Gameplay", "AIBoostStraightOnly", BOOL_OPT, "  AI boosts on straights only", "Off = anywhere while driving forward, also in corners.", "1" },
-    { "Gameplay", "AIBoostChaos", BOOL_OPT, "  Chaos mode", "Every AI car boosts all the time, everywhere, with an endless tank and a full power play bar. Overrides the three settings above.", "0" },
+    { "Gameplay", "AIBoostChaos", BOOL_OPT, "  Chaos mode", "Every AI car boosts all the time, everywhere, with an endless tank, a full power play bar and the highest AI skill. Overrides the three settings above.", "0" },
     // Debug
     { "Debug", "Log", BOOL_OPT, "Write SplitSecondPad.log", "A log next to the game, for bug reports.", "0" },
 };
@@ -191,15 +191,124 @@ static void SetValue(const Option& o, const std::string& v)
     s_lines.insert(s_lines.begin() + end, line);
 }
 
-// ---------------------------------------------------------------- window
+// ---------------------------------------------------------------- look
 
-static HWND s_wnd, s_tab, s_status, s_tip;
-static HFONT s_font;
+// dark theme: the controls are drawn here; the lists open as popup menus in Windows' dark menu style
+static const COLORREF kBack = RGB(24, 25, 28), kSide = RGB(32, 33, 38), kSideSel = RGB(46, 48, 55),
+                      kField = RGB(48, 50, 57), kBorder = RGB(66, 69, 78), kText = RGB(232, 233, 236),
+                      kDim = RGB(150, 154, 163), kOff = RGB(88, 91, 99), kAccent = RGB(255, 120, 20),
+                      kAccent2 = RGB(255, 70, 35);
+static HBRUSH s_backBrush, s_sideBrush, s_fieldBrush;
+static HFONT s_font, s_fontBold, s_fontTitle, s_fontBrand, s_fontSmall;
+
+enum Role { R_NONE, R_LABEL, R_VALUE, R_DIM, R_TITLE, R_BRAND, R_SIDEDIM, R_NAV, R_PRESET, R_ACTION, R_TOGGLE, R_SELECT };
+
+static HWND s_wnd, s_status, s_info, s_title, s_subtitle, s_nav[5];
 static int s_dpi = 96;
 static int s_page;
 static bool s_loading;
+static bool s_toggle[64];  // BOOL_OPT state by option index
+static int s_choice[64];   // CHOICE: selected item by option index, -1 = a value set by hand
+static std::string s_custom[64];  // that value
 
 static int S(int px) { return MulDiv(px, s_dpi, 96); }
+
+static HFONT MakeFont(int pt, int weight)
+{
+    return CreateFontW(-MulDiv(pt, s_dpi, 72), 0, 0, 0, weight, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                       CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
+}
+
+static void MakeFonts()
+{
+    HFONT old[] = { s_font, s_fontBold, s_fontSmall, s_fontTitle, s_fontBrand };
+    s_font = MakeFont(10, FW_NORMAL);
+    s_fontBold = MakeFont(10, FW_SEMIBOLD);
+    s_fontSmall = MakeFont(9, FW_NORMAL);
+    s_fontTitle = MakeFont(18, FW_SEMIBOLD);
+    s_fontBrand = MakeFont(16, FW_BOLD);
+    for (HFONT f : old)
+        if (f) DeleteObject(f);
+}
+
+// Per-monitor DPI (v2): the layout and fonts follow the monitor the window is on. Older Windows versions
+// fall back to the system DPI.
+static void DpiAware()
+{
+    HMODULE user = GetModuleHandleA("user32.dll");
+    typedef BOOL(WINAPI * SetContext_t)(HANDLE);
+    SetContext_t set = (SetContext_t)GetProcAddress(user, "SetProcessDpiAwarenessContext");
+    if (!set || !set((HANDLE)-4)) SetProcessDPIAware();  // -4 = DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
+}
+
+static int WindowDpi(HWND wnd)
+{
+    typedef UINT(WINAPI * GetDpi_t)(HWND);
+    GetDpi_t get = (GetDpi_t)GetProcAddress(GetModuleHandleA("user32.dll"), "GetDpiForWindow");
+    if (get && wnd) return (int)get(wnd);
+    HDC dc = GetDC(NULL);
+    int dpi = GetDeviceCaps(dc, LOGPIXELSY);
+    ReleaseDC(NULL, dc);
+    return dpi;
+}
+
+// the outer window size for the client area at the current DPI
+static SIZE WindowSize(DWORD style)
+{
+    RECT r = { 0, 0, MulDiv(880, s_dpi, 96), MulDiv(660, s_dpi, 96) };
+    typedef BOOL(WINAPI * Adjust_t)(RECT*, DWORD, BOOL, DWORD, UINT);
+    Adjust_t adjust = (Adjust_t)GetProcAddress(GetModuleHandleA("user32.dll"), "AdjustWindowRectExForDpi");
+    if (adjust) adjust(&r, style, FALSE, 0, (UINT)s_dpi);
+    else AdjustWindowRect(&r, style, FALSE);
+    SIZE size = { r.right - r.left, r.bottom - r.top };
+    return size;
+}
+
+static BOOL CALLBACK DestroyChild(HWND child, LPARAM)
+{
+    DestroyWindow(child);
+    return TRUE;
+}
+
+static void RoundRect(HDC dc, RECT r, int radius, COLORREF fill, COLORREF line)
+{
+    HBRUSH b = CreateSolidBrush(fill);
+    HPEN p = CreatePen(PS_SOLID, 1, line);
+    HGDIOBJ ob = SelectObject(dc, b), op = SelectObject(dc, p);
+    ::RoundRect(dc, r.left, r.top, r.right, r.bottom, radius, radius);
+    SelectObject(dc, ob);
+    SelectObject(dc, op);
+    DeleteObject(b);
+    DeleteObject(p);
+}
+
+// Windows' dark style for the popup menus (uxtheme ordinals, Windows 10 1903 and later)
+static void EnableDarkMenus()
+{
+    HMODULE ux = LoadLibraryA("uxtheme.dll");
+    if (!ux) return;
+    typedef int(WINAPI * SetPreferredAppMode_t)(int);
+    typedef void(WINAPI * FlushMenuThemes_t)();
+    SetPreferredAppMode_t setMode = (SetPreferredAppMode_t)GetProcAddress(ux, MAKEINTRESOURCEA(135));
+    FlushMenuThemes_t flush = (FlushMenuThemes_t)GetProcAddress(ux, MAKEINTRESOURCEA(136));
+    if (setMode) setMode(2);  // force dark
+    if (flush) flush();
+}
+
+static void DarkTitleBar(HWND wnd)
+{
+    HMODULE dwm = LoadLibraryA("dwmapi.dll");
+    if (!dwm) return;
+    typedef HRESULT(WINAPI * DwmSet_t)(HWND, DWORD, LPCVOID, DWORD);
+    DwmSet_t set = (DwmSet_t)GetProcAddress(dwm, "DwmSetWindowAttribute");
+    if (!set) return;
+    BOOL on = TRUE;
+    if (FAILED(set(wnd, 20, &on, sizeof(on)))) set(wnd, 19, &on, sizeof(on));  // immersive dark mode
+    COLORREF caption = kSide;
+    set(wnd, 35, &caption, sizeof(caption));  // caption colour, Windows 11
+}
+
+// ---------------------------------------------------------------- options on screen
 
 static Option* Find(const char* key)
 {
@@ -207,6 +316,8 @@ static Option* Find(const char* key)
         if (!strcmp(o.key, key)) return &o;
     return NULL;
 }
+
+static int IndexOf(const Option& o) { return (int)(&o - kOptions); }
 
 static std::vector<std::pair<std::string, std::string>> Choices(const Option& o)
 {
@@ -236,15 +347,16 @@ static int RangeSteps(const Option& o) { return (int)((o.hi - o.lo) / o.step + 0
 static void ShowValue(Option& o, double v)
 {
     std::string text = FormatRange(o, v);
-    if (!strcmp(o.key, "BoostMaxSpeed")) text += " m/s  (" + std::to_string((int)(v * 3.6 + 0.5)) + " km/h)";
-    if (!strcmp(o.key, "BoostAcceleration")) text += " m/s per second";
+    if (!strcmp(o.key, "BoostMaxSpeed")) text += " m/s  " + std::to_string((int)(v * 3.6 + 0.5)) + " km/h";
+    else if (!strcmp(o.key, "BoostAcceleration")) text += " m/s per s";
+    else if (o.decimals) text += "x";
     SetWindowTextA(o.value, text.c_str());
 }
 
 static bool IsOn(const char* key)
 {
     Option* o = Find(key);
-    return o && SendMessageA(o->ctrl, BM_GETCHECK, 0, 0) == BST_CHECKED;
+    return o && s_toggle[IndexOf(*o)];
 }
 
 static void UpdateEnables()
@@ -259,7 +371,10 @@ static void UpdateEnables()
     for (auto& r : rules) {
         Option* o = Find(r.key);
         EnableWindow(o->ctrl, r.on);
+        EnableWindow(o->label, r.on);
         if (o->value) EnableWindow(o->value, r.on);
+        InvalidateRect(o->label, NULL, TRUE);
+        if (o->value) InvalidateRect(o->value, NULL, TRUE);
     }
 }
 
@@ -271,18 +386,18 @@ static void LoadControls()
     for (Option& o : kOptions) {
         std::string v = GetValue(o);
         if (o.kind == BOOL_OPT) {
-            SendMessageA(o.ctrl, BM_SETCHECK, atoi(v.c_str()) ? BST_CHECKED : BST_UNCHECKED, 0);
+            s_toggle[IndexOf(o)] = atoi(v.c_str()) != 0;
+            InvalidateRect(o.ctrl, NULL, TRUE);
         } else if (o.kind == CHOICE) {
             auto items = Choices(o);
             int sel = -1;
             for (int i = 0; i < (int)items.size(); i++)
-                if (!_stricmp(items[i].first.c_str(), v.c_str()) || (atof(v.c_str()) == atof(items[i].first.c_str()) &&
-                                                                       isdigit((unsigned char)v[0]))) sel = i;
-            if (sel < 0) {  // a value set by hand that is not in the list
-                SendMessageA(o.ctrl, CB_ADDSTRING, 0, (LPARAM)(v + " (custom)").c_str());
-                sel = (int)items.size();
-            }
-            SendMessageA(o.ctrl, CB_SETCURSEL, sel, 0);
+                if (!_stricmp(items[i].first.c_str(), v.c_str()) ||
+                    (isdigit((unsigned char)v[0]) && atof(v.c_str()) == atof(items[i].first.c_str())))
+                    sel = i;
+            s_choice[IndexOf(o)] = sel;
+            s_custom[IndexOf(o)] = v + " (custom)";
+            InvalidateRect(o.ctrl, NULL, TRUE);
         } else {
             double d = atof(v.c_str());
             if (d < o.lo) d = o.lo;
@@ -300,11 +415,11 @@ static void Changed(Option& o)
     if (s_loading) return;
     std::string v;
     if (o.kind == BOOL_OPT) {
-        v = SendMessageA(o.ctrl, BM_GETCHECK, 0, 0) == BST_CHECKED ? "1" : "0";
+        v = s_toggle[IndexOf(o)] ? "1" : "0";
     } else if (o.kind == CHOICE) {
-        int sel = (int)SendMessageA(o.ctrl, CB_GETCURSEL, 0, 0);
+        int sel = s_choice[IndexOf(o)];
         auto items = Choices(o);
-        if (sel < 0 || sel >= (int)items.size()) return;  // the custom entry stays as it is
+        if (sel < 0 || sel >= (int)items.size()) return;  // a value set by hand stays as it is
         v = items[sel].first;
     } else {
         double d = o.lo + SendMessageA(o.ctrl, TBM_GETPOS, 0, 0) * o.step;
@@ -313,22 +428,33 @@ static void Changed(Option& o)
     }
     SetValue(o, v);
     UpdateEnables();
-    char msg[160];
-    if (SaveIni()) sprintf(msg, "Saved %s=%s", o.key, v.c_str());
+    char msg[200];
+    if (SaveIni()) sprintf(msg, "Saved  %s = %s", o.key, v.c_str());
     else sprintf(msg, "Could not write %s", s_path);
     Status(msg);
 }
 
+static const char* const kPageText[] = {
+    "Pads, triggers and button prompts.",
+    "Frame rate, image quality and effects. Bloom and exposure apply while the game runs.",
+    "Streaming, draw distance and pop-in.",
+    "Unlocks, boost and the AI.",
+    "For bug reports.",
+};
+
 static void ShowPage(int page)
 {
     s_page = page;
+    SetWindowTextA(s_title, kPages[page]);
+    SetWindowTextA(s_subtitle, kPageText[page]);
     for (Option& o : kOptions) {
-        bool show = !strcmp(o.section, kPages[page]);
-        int cmd = show ? SW_SHOW : SW_HIDE;
-        if (o.label) ShowWindow(o.label, cmd);
+        int cmd = !strcmp(o.section, kPages[page]) ? SW_SHOW : SW_HIDE;
+        ShowWindow(o.label, cmd);
         ShowWindow(o.ctrl, cmd);
         if (o.value) ShowWindow(o.value, cmd);
     }
+    SetWindowTextA(s_info, "Point at an option to see what it does. Every change is saved at once.");
+    for (int i = 0; i < kPageCount; i++) InvalidateRect(s_nav[i], NULL, TRUE);
 }
 
 struct Preset {
@@ -360,67 +486,68 @@ static void ApplyPreset(const Preset& p)
     Status(msg);
 }
 
-static void AddTip(HWND ctrl, const char* text)
-{
-    TOOLINFOA ti = { sizeof(ti) };
-    ti.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
-    ti.hwnd = s_wnd;
-    ti.uId = (UINT_PTR)ctrl;
-    ti.lpszText = (LPSTR)text;
-    SendMessageA(s_tip, TTM_ADDTOOLA, 0, (LPARAM)&ti);
-}
-
-static HWND Child(const char* cls, const char* text, DWORD style, int x, int y, int w, int h, int id)
+static HWND Child(const char* cls, const char* text, DWORD style, int x, int y, int w, int h, int id, Role role,
+                  HFONT font)
 {
     HWND h_ = CreateWindowExA(0, cls, text, WS_CHILD | style, x, y, w, h, s_wnd, (HMENU)(INT_PTR)id, NULL, NULL);
-    SendMessageA(h_, WM_SETFONT, (WPARAM)s_font, TRUE);
+    SendMessageA(h_, WM_SETFONT, (WPARAM)font, TRUE);
+    SetWindowLongPtrA(h_, GWLP_USERDATA, role);
     return h_;
 }
 
-enum { ID_TAB = 1, ID_PRESET0 = 10, ID_OPEN = 20, ID_CLOSE = 21, ID_OPTION0 = 100 };
+enum { ID_NAV0 = 10, ID_PRESET0 = 20, ID_OPEN = 30, ID_CLOSE = 31, ID_OPTION0 = 100 };
+
+// layout, in 96 dpi pixels
+static const int kWidth = 880, kHeight = 660, kSideW = 210, kContentX = 240, kLabelW = 300, kRowH = 33, kRowTop = 100;
 
 static void CreateControls()
 {
-    const int left = S(24), labelW = S(250), ctrlX = left + labelW, ctrlW = S(260), rowH = S(30), top = S(64);
-    s_tab = Child(WC_TABCONTROLA, "", WS_VISIBLE | WS_CLIPSIBLINGS, S(10), S(10), S(640), S(560), ID_TAB);
-    for (int i = 0; i < kPageCount; i++) {
-        TCITEMA item = { TCIF_TEXT };
-        item.pszText = (LPSTR)kPages[i];
-        SendMessageA(s_tab, TCM_INSERTITEMA, i, (LPARAM)&item);
-    }
+    const int ctrlX = kContentX + kLabelW;
+    Child("STATIC", "glimpse_fix", WS_VISIBLE | SS_LEFT, S(22), S(22), S(180), S(30), 0, R_BRAND, s_fontBrand);
+    Child("STATIC", "Split/Second PC fix", WS_VISIBLE | SS_LEFT, S(23), S(54), S(180), S(20), 0, R_SIDEDIM, s_fontSmall);
+    for (int i = 0; i < kPageCount; i++)
+        s_nav[i] = Child("BUTTON", kPages[i], WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW, 0, S(96) + i * S(42), S(kSideW),
+                         S(40), ID_NAV0 + i, R_NAV, s_font);
+    Child("STATIC", "PRESETS", WS_VISIBLE | SS_LEFT, S(22), S(424), S(160), S(18), 0, R_SIDEDIM, s_fontSmall);
+    for (int i = 0; i < 3; i++)
+        Child("BUTTON", kPresets[i].name, WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW, S(18), S(448) + i * S(40), S(174), S(32),
+              ID_PRESET0 + i, R_PRESET, s_font);
+
+    s_title = Child("STATIC", "", WS_VISIBLE | SS_LEFT, S(kContentX), S(26), S(600), S(36), 0, R_TITLE, s_fontTitle);
+    s_subtitle = Child("STATIC", "", WS_VISIBLE | SS_LEFT, S(kContentX), S(64), S(610), S(22), 0, R_DIM, s_font);
+
     int row[kPageCount] = {};
     for (int i = 0; i < kOptionCount; i++) {
         Option& o = kOptions[i];
         int page = 0;
         while (strcmp(kPages[page], o.section)) page++;
-        int y = top + row[page]++ * rowH;
+        int y = S(kRowTop) + row[page]++ * S(kRowH);
         int id = ID_OPTION0 + i;
+        const char* text = o.text;
+        int indent = 0;
+        while (*text == ' ') text++, indent += S(9);
+        o.label = Child("STATIC", text, SS_LEFT | SS_CENTERIMAGE | SS_NOTIFY, S(kContentX) + indent, y, S(kLabelW) - indent,
+                        S(26), 0, R_LABEL, s_font);
         if (o.kind == BOOL_OPT) {
-            o.ctrl = Child("BUTTON", o.text, WS_TABSTOP | BS_AUTOCHECKBOX, left, y, labelW + ctrlW, S(22), id);
+            o.ctrl = Child("BUTTON", "", WS_TABSTOP | BS_OWNERDRAW, S(ctrlX), y + S(2), S(46), S(22), id, R_TOGGLE, s_font);
+        } else if (o.kind == CHOICE) {
+            o.ctrl = Child("BUTTON", "", WS_TABSTOP | BS_OWNERDRAW, S(ctrlX), y, S(250), S(28), id, R_SELECT, s_font);
         } else {
-            o.label = Child("STATIC", o.text, SS_LEFT | SS_CENTERIMAGE, left, y, labelW, S(22), 0);
-            if (o.kind == CHOICE) {
-                o.ctrl = Child("COMBOBOX", "", WS_TABSTOP | WS_VSCROLL | CBS_DROPDOWNLIST, ctrlX, y, ctrlW, S(300), id);
-                for (auto& c : Choices(o)) SendMessageA(o.ctrl, CB_ADDSTRING, 0, (LPARAM)c.second.c_str());
-            } else {
-                o.ctrl = Child(TRACKBAR_CLASSA, "", WS_TABSTOP | TBS_HORZ | TBS_NOTICKS, ctrlX, y, S(170), S(26), id);
-                SendMessageA(o.ctrl, TBM_SETRANGE, TRUE, MAKELPARAM(0, RangeSteps(o)));
-                SendMessageA(o.ctrl, TBM_SETPAGESIZE, 0, max(1, RangeSteps(o) / 10));
-                o.value = Child("STATIC", "", SS_LEFT | SS_CENTERIMAGE, ctrlX + S(176), y, S(150), S(22), 0);
-            }
+            o.ctrl = Child(TRACKBAR_CLASSA, "", WS_TABSTOP | TBS_HORZ | TBS_NOTICKS | TBS_BOTH, S(ctrlX) - S(6), y, S(200),
+                           S(26), id, R_NONE, s_font);
+            SendMessageA(o.ctrl, TBM_SETRANGE, TRUE, MAKELPARAM(0, RangeSteps(o)));
+            SendMessageA(o.ctrl, TBM_SETPAGESIZE, 0, max(1, RangeSteps(o) / 10));
+            o.value = Child("STATIC", "", SS_LEFT | SS_CENTERIMAGE, S(ctrlX) + S(200), y, S(140), S(26), 0, R_VALUE, s_font);
         }
-        AddTip(o.ctrl, o.help);
     }
-    Child("STATIC", "Hover an option for details. Changes are saved at once.", WS_VISIBLE | SS_LEFT, S(24),
-          S(40), S(600), S(20), 0);
-    int by = S(582);
-    Child("STATIC", "Preset:", WS_VISIBLE | SS_LEFT | SS_CENTERIMAGE, S(14), by, S(50), S(26), 0);
-    for (int i = 0; i < 3; i++)
-        Child("BUTTON", kPresets[i].name, WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON, S(66) + i * S(118), by, S(112),
-              S(26), ID_PRESET0 + i);
-    Child("BUTTON", "Open INI...", WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON, S(440), by, S(100), S(26), ID_OPEN);
-    Child("BUTTON", "Close", WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON, S(550), by, S(100), S(26), ID_CLOSE);
-    s_status = Child("STATIC", "", WS_VISIBLE | SS_LEFT | SS_PATHELLIPSIS, S(14), S(616), S(636), S(20), 0);
+    s_info = Child("STATIC", "", WS_VISIBLE | SS_LEFT, S(kContentX), S(kHeight - 104), S(kWidth - kContentX - 24), S(42), 0,
+                   R_DIM, s_font);
+    s_status = Child("STATIC", "", WS_VISIBLE | SS_LEFT | SS_PATHELLIPSIS | SS_CENTERIMAGE, S(kContentX), S(kHeight - 46),
+                     S(380), S(30), 0, R_DIM, s_fontSmall);
+    Child("BUTTON", "Open INI...", WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW, S(kWidth - 236), S(kHeight - 48), S(104), S(32),
+          ID_OPEN, R_ACTION, s_font);
+    Child("BUTTON", "Close", WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW, S(kWidth - 122), S(kHeight - 48), S(104), S(32),
+          ID_CLOSE, R_ACTION, s_font);
 }
 
 static bool PickIni(HWND owner)
@@ -451,18 +578,185 @@ static void Open()
     LoadControls();
 }
 
+// ---------------------------------------------------------------- drawing
+
+static void DrawButton(const DRAWITEMSTRUCT* di)
+{
+    HDC dc = di->hDC;
+    RECT r = di->rcItem;
+    Role role = (Role)GetWindowLongPtrA(di->hwndItem, GWLP_USERDATA);
+    bool pressed = (di->itemState & ODS_SELECTED) != 0, disabled = (di->itemState & ODS_DISABLED) != 0;
+    char text[64];
+    GetWindowTextA(di->hwndItem, text, sizeof(text));
+    SetBkMode(dc, TRANSPARENT);
+
+    if (role == R_TOGGLE) {
+        int index = GetDlgCtrlID(di->hwndItem) - ID_OPTION0;
+        bool on = s_toggle[index];
+        FillRect(dc, &r, s_backBrush);
+        RECT track = { r.left, r.top + S(1), r.left + S(42), r.bottom - S(1) };
+        COLORREF fill = on ? (disabled ? RGB(110, 70, 45) : kAccent) : kField;
+        RoundRect(dc, track, S(20), fill, on ? fill : kBorder);
+        int d = track.bottom - track.top - S(6);
+        int x = on ? track.right - S(3) - d : track.left + S(3);
+        RECT knob = { x, track.top + S(3), x + d, track.top + S(3) + d };
+        COLORREF k = disabled ? kOff : (on ? RGB(255, 255, 255) : kDim);
+        RoundRect(dc, knob, d, k, k);
+        return;
+    }
+    if (role == R_NAV) {
+        int page = GetDlgCtrlID(di->hwndItem) - ID_NAV0;
+        bool sel = page == s_page;
+        HBRUSH b = CreateSolidBrush(sel ? kSideSel : kSide);
+        FillRect(dc, &r, b);
+        DeleteObject(b);
+        if (sel) {
+            RECT bar = { r.left, r.top + S(8), r.left + S(4), r.bottom - S(8) };
+            HBRUSH a = CreateSolidBrush(kAccent);
+            FillRect(dc, &bar, a);
+            DeleteObject(a);
+        }
+        SelectObject(dc, sel ? s_fontBold : s_font);
+        SetTextColor(dc, sel ? kText : kDim);
+        RECT t = r;
+        t.left += S(24);
+        DrawTextA(dc, text, -1, &t, DT_SINGLELINE | DT_VCENTER | DT_LEFT);
+        return;
+    }
+    if (role == R_SELECT) {  // a list: the current item and a chevron
+        int index = GetDlgCtrlID(di->hwndItem) - ID_OPTION0;
+        Option& o = kOptions[index];
+        auto items = Choices(o);
+        int sel = s_choice[index];
+        std::string value = sel >= 0 && sel < (int)items.size() ? items[sel].second : s_custom[index];
+        FillRect(dc, &r, s_backBrush);
+        RoundRect(dc, r, S(8), pressed ? kSideSel : kField, disabled ? kField : kBorder);
+        RECT t = r;
+        t.left += S(12);
+        t.right -= S(30);
+        SelectObject(dc, s_font);
+        SetTextColor(dc, disabled ? kOff : kText);
+        DrawTextA(dc, value.c_str(), -1, &t, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
+        HPEN pen = CreatePen(PS_SOLID, S(2), disabled ? kOff : kAccent);
+        HGDIOBJ op = SelectObject(dc, pen);
+        int cx = r.right - S(17), cy = (r.top + r.bottom) / 2;
+        MoveToEx(dc, cx - S(5), cy - S(2), NULL);
+        LineTo(dc, cx, cy + S(3));
+        LineTo(dc, cx + S(5), cy - S(2));
+        SelectObject(dc, op);
+        DeleteObject(pen);
+        return;
+    }
+    // presets and actions: outlined pills, filled while pressed
+    HBRUSH b = CreateSolidBrush(role == R_PRESET ? kSide : kBack);
+    FillRect(dc, &r, b);
+    DeleteObject(b);
+    COLORREF line = role == R_PRESET && !strcmp(text, "Chaos") ? kAccent2 : kBorder;
+    RoundRect(dc, r, S(10), pressed ? kSideSel : (role == R_PRESET ? kSide : kField), line);
+    SelectObject(dc, s_font);
+    SetTextColor(dc, kText);
+    DrawTextA(dc, text, -1, &r, DT_SINGLELINE | DT_VCENTER | DT_CENTER);
+}
+
+// the slider: a thin track, filled up to the thumb, and a round thumb
+static LRESULT DrawSlider(NMCUSTOMDRAW* cd)
+{
+    if (cd->dwDrawStage == CDDS_PREPAINT) return CDRF_NOTIFYITEMDRAW;
+    if (cd->dwDrawStage != CDDS_ITEMPREPAINT) return CDRF_DODEFAULT;
+    bool enabled = IsWindowEnabled(cd->hdr.hwndFrom) != 0;
+    HDC dc = cd->hdc;
+    if (cd->dwItemSpec == TBCD_CHANNEL) {
+        RECT thumb;
+        SendMessageA(cd->hdr.hwndFrom, TBM_GETTHUMBRECT, 0, (LPARAM)&thumb);
+        RECT c = cd->rc;
+        int mid = (c.top + c.bottom) / 2;
+        RECT all = { c.left, mid - S(2), c.right, mid + S(2) };
+        RoundRect(dc, all, S(4), kField, kField);
+        RECT done = { c.left, mid - S(2), (thumb.left + thumb.right) / 2, mid + S(2) };
+        COLORREF a = enabled ? kAccent : kOff;
+        RoundRect(dc, done, S(4), a, a);
+        return CDRF_SKIPDEFAULT;
+    }
+    if (cd->dwItemSpec == TBCD_THUMB) {
+        RECT t = cd->rc;
+        int size = S(16), cx = (t.left + t.right) / 2, cy = (t.top + t.bottom) / 2;
+        RECT k = { cx - size / 2, cy - size / 2, cx + size / 2, cy + size / 2 };
+        RoundRect(dc, k, size, enabled ? RGB(255, 255, 255) : kOff, enabled ? kAccent : kOff);
+        return CDRF_SKIPDEFAULT;
+    }
+    if (cd->dwItemSpec == TBCD_TICS) return CDRF_SKIPDEFAULT;
+    return CDRF_DODEFAULT;
+}
+
+static void ShowHelpFor(HWND hwnd)
+{
+    static HWND last;
+    if (hwnd == last) return;
+    last = hwnd;
+    for (Option& o : kOptions)
+        if (hwnd == o.ctrl || hwnd == o.label || hwnd == o.value) {
+            SetWindowTextA(s_info, o.help);
+            return;
+        }
+}
+
 static LRESULT CALLBACK WndProc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
 {
     switch (msg) {
-    case WM_NOTIFY:
-        if (((NMHDR*)lp)->idFrom == ID_TAB && ((NMHDR*)lp)->code == TCN_SELCHANGE)
-            ShowPage((int)SendMessageA(s_tab, TCM_GETCURSEL, 0, 0));
+    case WM_ERASEBKGND: {
+        RECT r;
+        GetClientRect(wnd, &r);
+        FillRect((HDC)wp, &r, s_backBrush);
+        RECT side = { 0, 0, S(kSideW), r.bottom };
+        FillRect((HDC)wp, &side, s_sideBrush);
+        RECT sep = { S(kContentX), S(kHeight - 116), r.right - S(24), S(kHeight - 115) };
+        HBRUSH b = CreateSolidBrush(kBorder);
+        FillRect((HDC)wp, &sep, b);
+        DeleteObject(b);
+        return 1;
+    }
+    case WM_DRAWITEM:
+        DrawButton((DRAWITEMSTRUCT*)lp);
+        return TRUE;
+    case WM_NOTIFY: {
+        NMHDR* h = (NMHDR*)lp;
+        if (h->code == NM_CUSTOMDRAW)
+            for (Option& o : kOptions)
+                if (o.kind == RANGE && o.ctrl == h->hwndFrom) return DrawSlider((NMCUSTOMDRAW*)lp);
         return 0;
+    }
+    case WM_SETCURSOR:
+        ShowHelpFor((HWND)wp);
+        break;
     case WM_COMMAND: {
         int id = LOWORD(wp), code = HIWORD(wp);
         if (id >= ID_OPTION0 && id < ID_OPTION0 + kOptionCount) {
             Option& o = kOptions[id - ID_OPTION0];
-            if ((o.kind == BOOL_OPT && code == BN_CLICKED) || (o.kind == CHOICE && code == CBN_SELCHANGE)) Changed(o);
+            if (o.kind == BOOL_OPT && code == BN_CLICKED) {
+                s_toggle[id - ID_OPTION0] = !s_toggle[id - ID_OPTION0];
+                InvalidateRect(o.ctrl, NULL, TRUE);
+                Changed(o);
+            } else if (o.kind == CHOICE && code == BN_CLICKED) {
+                // the items as a popup menu below the field
+                auto items = Choices(o);
+                HMENU menu = CreatePopupMenu();
+                for (int i = 0; i < (int)items.size(); i++)
+                    AppendMenuA(menu, MF_STRING | (i == s_choice[id - ID_OPTION0] ? MF_CHECKED : 0), i + 1,
+                                items[i].second.c_str());
+                RECT r;
+                GetWindowRect(o.ctrl, &r);
+                int pick = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN, r.left, r.bottom + S(2), 0,
+                                          wnd, NULL);
+                DestroyMenu(menu);
+                if (pick > 0) {
+                    s_choice[id - ID_OPTION0] = pick - 1;
+                    InvalidateRect(o.ctrl, NULL, TRUE);
+                    Changed(o);
+                }
+            }
+            if (code == BN_SETFOCUS) ShowHelpFor(o.ctrl);
+        } else if (id >= ID_NAV0 && id < ID_NAV0 + kPageCount) {
+            ShowPage(id - ID_NAV0);
         } else if (id >= ID_PRESET0 && id < ID_PRESET0 + 3) {
             char q[200];
             sprintf(q, "Set every option to \"%s\"?", kPresets[id - ID_PRESET0].name);
@@ -476,11 +770,38 @@ static LRESULT CALLBACK WndProc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
     }
     case WM_HSCROLL:
         for (Option& o : kOptions)
-            if (o.ctrl == (HWND)lp) Changed(o);
+            if (o.ctrl == (HWND)lp) {
+                Changed(o);
+                ShowHelpFor(o.ctrl);
+            }
         return 0;
-    case WM_CTLCOLORSTATIC:  // labels on the tab page background
-        SetBkMode((HDC)wp, TRANSPARENT);
-        return (LRESULT)GetSysColorBrush(COLOR_WINDOW);
+    case WM_CTLCOLORSTATIC: {
+        HDC dc = (HDC)wp;
+        HWND c = (HWND)lp;
+        Role role = (Role)GetWindowLongPtrA(c, GWLP_USERDATA);
+        bool side = role == R_BRAND || role == R_SIDEDIM;
+        SetBkMode(dc, TRANSPARENT);
+        COLORREF col = kText;
+        if (role == R_BRAND) col = kAccent;
+        else if (role == R_DIM || role == R_SIDEDIM) col = kDim;
+        else if (role == R_VALUE) col = IsWindowEnabled(c) ? kAccent : kOff;
+        else if (role == R_LABEL) col = IsWindowEnabled(c) ? kText : kOff;
+        SetTextColor(dc, col);
+        return (LRESULT)(side ? s_sideBrush : s_backBrush);
+    }
+    case WM_DPICHANGED: {
+        s_dpi = HIWORD(wp);
+        MakeFonts();
+        EnumChildWindows(wnd, DestroyChild, 0);
+        for (Option& o : kOptions) o.label = o.ctrl = o.value = NULL;
+        CreateControls();
+        LoadControls();
+        ShowPage(s_page);
+        const RECT* r = (const RECT*)lp;
+        SetWindowPos(wnd, NULL, r->left, r->top, r->right - r->left, r->bottom - r->top, SWP_NOZORDER | SWP_NOACTIVATE);
+        InvalidateRect(wnd, NULL, TRUE);
+        return 0;
+    }
     case WM_DESTROY:
         PostQuitMessage(0);
         return 0;
@@ -490,15 +811,14 @@ static LRESULT CALLBACK WndProc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
 
 int WINAPI WinMain(HINSTANCE inst, HINSTANCE, LPSTR, int show)
 {
-    SetProcessDPIAware();
-    HDC dc = GetDC(NULL);
-    s_dpi = GetDeviceCaps(dc, LOGPIXELSY);
-    ReleaseDC(NULL, dc);
-    INITCOMMONCONTROLSEX icc = { sizeof(icc), ICC_TAB_CLASSES | ICC_BAR_CLASSES | ICC_STANDARD_CLASSES };
+    DpiAware();
+    s_dpi = WindowDpi(NULL);
+    EnableDarkMenus();
+    INITCOMMONCONTROLSEX icc = { sizeof(icc), ICC_BAR_CLASSES | ICC_STANDARD_CLASSES };
     InitCommonControlsEx(&icc);
-    NONCLIENTMETRICSA ncm = { sizeof(ncm) };
-    SystemParametersInfoA(SPI_GETNONCLIENTMETRICS, sizeof(ncm), &ncm, 0);
-    s_font = CreateFontIndirectA(&ncm.lfMessageFont);
+    s_backBrush = CreateSolidBrush(kBack);
+    s_sideBrush = CreateSolidBrush(kSide);
+    s_fieldBrush = CreateSolidBrush(kField);
 
     // the INI next to this program, else ask
     GetModuleFileNameA(NULL, s_path, MAX_PATH);
@@ -511,23 +831,29 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE, LPSTR, int show)
         if (GetFileAttributesA(exe) == INVALID_FILE_ATTRIBUTES && !PickIni(NULL)) return 0;
     }
 
-    WNDCLASSA wc = {};
+    WNDCLASSEXA wc = { sizeof(wc) };
     wc.lpfnWndProc = WndProc;
     wc.hInstance = inst;
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
-    wc.hbrBackground = GetSysColorBrush(COLOR_WINDOW);
-    wc.hIcon = LoadIcon(NULL, IDI_APPLICATION);
+    wc.hbrBackground = NULL;
+    wc.hIcon = (HICON)LoadImageA(inst, MAKEINTRESOURCEA(1), IMAGE_ICON, GetSystemMetrics(SM_CXICON),
+                                 GetSystemMetrics(SM_CYICON), 0);
+    wc.hIconSm = (HICON)LoadImageA(inst, MAKEINTRESOURCEA(1), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON),
+                                   GetSystemMetrics(SM_CYSMICON), 0);
     wc.lpszClassName = "glimpse_config";
-    RegisterClassA(&wc);
-    RECT r = { 0, 0, S(660), S(644) };
+    RegisterClassExA(&wc);
     DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN;
-    AdjustWindowRect(&r, style, FALSE);
-    s_wnd = CreateWindowExA(0, wc.lpszClassName, "glimpse_fix settings", style, CW_USEDEFAULT, CW_USEDEFAULT,
-                            r.right - r.left, r.bottom - r.top, NULL, NULL, inst, NULL);
-    s_tip = CreateWindowExA(WS_EX_TOPMOST, TOOLTIPS_CLASSA, NULL, WS_POPUP | TTS_ALWAYSTIP, 0, 0, 0, 0, s_wnd, NULL,
-                            inst, NULL);
-    SendMessageA(s_tip, TTM_SETMAXTIPWIDTH, 0, S(420));
-    SendMessageA(s_tip, TTM_SETDELAYTIME, TTDT_AUTOPOP, 30000);
+    SIZE size = WindowSize(style);
+    s_wnd = CreateWindowExA(0, wc.lpszClassName, "glimpse_fix settings", style, CW_USEDEFAULT, CW_USEDEFAULT, size.cx,
+                            size.cy, NULL, NULL, inst, NULL);
+    int dpi = WindowDpi(s_wnd);  // the monitor the window opened on
+    if (dpi != s_dpi) {
+        s_dpi = dpi;
+        size = WindowSize(style);
+        SetWindowPos(s_wnd, NULL, 0, 0, size.cx, size.cy, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+    MakeFonts();
+    DarkTitleBar(s_wnd);
     CreateControls();
     Open();
     ShowPage(0);
