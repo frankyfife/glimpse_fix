@@ -46,13 +46,17 @@ code, so they are safe with the copy protection.
 
 ## Install
 
-1. Copy `dinput8.dll` and `SplitSecondPad.ini` into the game folder
+1. Copy `dinput8.dll`, `SplitSecondPad.ini` and `glimpse_config.exe` into the game folder
    (`…\steamapps\common\SplitSecond`).
 2. Drag `SplitSecond.exe` onto `setlaa.exe` (or run `setlaa.exe <path to SplitSecond.exe>`).
    It sets the large address aware flag and keeps the original as `SplitSecond.exe.orig`.
    Steam's "Verify integrity of game files" restores the original exe; just run it again.
 
-Uninstall: delete `dinput8.dll` and `SplitSecondPad.ini`, rename `SplitSecond.exe.orig` back.
+3. Optional: run `glimpse_config.exe` to change the settings (see below), or edit `SplitSecondPad.ini`
+   by hand.
+
+Uninstall: delete `dinput8.dll`, `SplitSecondPad.ini` and `glimpse_config.exe`, rename
+`SplitSecond.exe.orig` back.
 
 ## What was wrong, and what the fix does
 
@@ -176,6 +180,16 @@ The one exception is `RenderScale` set to a number (see Known limitations).
   contexts in use whenever it changes; a check that found something shows up as two more
   contexts (`8B03 8AF3`) every ~22 s.
 
+## Settings
+
+`glimpse_config.exe` edits `SplitSecondPad.ini` next to it (or one picked with *Open INI...*): one
+tab per section, checkboxes, sliders and lists, a tooltip with the details on every option, and
+three presets (*Recommended*, *Original game*, *Chaos*). Options that depend on another one are
+greyed out while it is off. Every change is saved at once; bloom and exposure apply while the game
+runs, everything else at the next start. Only values are changed, so comments, order and keys the
+program does not know stay as they are. It is a plain Win32 program without any runtime to install
+and does not touch the game.
+
 ## SplitSecondPad.ini
 
 The file is split into sections. INIs from older versions with everything under `[Game]` are still read.
@@ -257,8 +271,8 @@ The file is split into sections. INIs from older versions with everything under 
 
 ## Building
 
-`build.bat` with the Visual Studio 2022 Build Tools (x86) builds `build\dinput8.dll` and
-`build\setlaa.exe`.
+`build.bat` with the Visual Studio 2022 Build Tools (x86) builds `build\dinput8.dll`,
+`build\setlaa.exe` and `build\glimpse_config.exe` (`config/glimpse_config.cpp`).
 
 ### Research tools
 
