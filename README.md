@@ -133,6 +133,11 @@ draw at once.
   the amount is doubled. `MotionBlurStrength` scales it further.
 * **Vignette:** the race cameras darken the screen edges in the grading pass; `Vignette=0` sets
   the vignette's U/V scale to 0 for that pass, grading and gradient stay.
+* **Bloom and flares:** bloom, the sun/light and screen space lens flares and the particle flares
+  can each be switched off (`Bloom`, `LensFlare`, `ParticleFlare`), and the bloom look and exposure
+  tuned live (`BloomStrength`, `BloomTone`, `BloomCurve`, `Exposure`). Bloom is cleared from the
+  tone mapping pass's shader choice, the particle flare pass from its own state flag (both through
+  their vtable slots), the lens flares through the game's two enable tweakables.
 * **Anisotropic filtering:** the game filters all textures linearly; mipmapped textures that are
   not render targets get anisotropic filtering.
 * **RenderScale:** "Very High" is exactly "High" plus 2x supersampling. The factor can be set
@@ -173,26 +178,47 @@ The one exception is `RenderScale` set to a number (see Known limitations).
 
 ## SplitSecondPad.ini
 
-| Section / key | Default | Meaning |
+The file is split into sections. INIs from older versions with everything under `[Game]` are still read.
+
+**[Controller]**
+
+| Key | Default | Meaning |
 |---|---|---|
-| `[Controller] VirtualPads` | 4 | XInput slots exposed as pads (0–4). The game accepts at most 4 joysticks; lower this to make room for a wheel. |
+| `VirtualPads` | 4 | XInput slots exposed as pads (0–4). The game accepts at most 4 joysticks; lower this to make room for a wheel. |
 | `HideXInputFromDirectInput` | 1 | Don't offer the real XInput devices through DirectInput as well. |
 | `SeparateTriggers` | 1 | 0 = stock shared Z axis. |
 | `StickDeadzone` | 0.15 | Radial stick deadzone (0–1). |
 | `TriggerDeadzone` | 0.05 | Trigger deadzone (0–1). |
 | `RumbleStrength` | 1.0 | 0 = off. |
 | `ButtonGlyphs` | xbox | `xbox`, `playstation` or `keyboard` (never switch). |
-| `Log` | 0 | 1 = write `SplitSecondPad.log` (Direct3D device, FMOD events, music state, SecuROM VM contexts, every change of the profile `.sav` files). |
-| `TestFeed`, `Profile` | 0 | Development only: pad state from shared memory (`tools/padfeed.py`), call counters. |
-| `[Game] FrameRate` | 60 | 30 = stock. |
-| `StreamPoolMB` | 512 | Streaming pool in MB, 0 = stock (57). Only used when the exe has the LAA flag. |
-| `FixPowerplayIconSize` | 1 | Powerplay icons and route change markers at console size at every resolution. 0 = stock. |
-| `MotionBlurStrength` | 1.0 | Motion blur multiplier on top of the 60 fps compensation. 0 = off. |
+
+**[Graphics]**
+
+| Key | Default | Meaning |
+|---|---|---|
+| `FrameRate` | 60 | 30 = stock. |
 | `RenderScale` | auto | Internal resolution factor 0.5–4.0; `auto` = 2.0 at Very High, 1.0 below. |
 | `Anisotropy` | 16 | Anisotropic filtering 2–16, 0 = stock (linear). |
+| `MotionBlurStrength` | 1.0 | Motion blur multiplier on top of the 60 fps compensation. 0 = off. |
+| `Vignette` | 0 | 1 = keep the cameras' darkened screen edges. |
+| `Bloom` | 1 | 0 = no bloom (glow around bright areas); the frame is still tone mapped. |
+| `BloomStrength`, `BloomTone`, `BloomCurve`, `Exposure` | 1.0 | Multipliers on the cameras' bloom values (0–10): glow on bright areas, a softer second bright pass value, the add curve, the brightness of the whole picture. Read again every 2 s, so they can be tuned while the game runs. |
+| `LensFlare` | 1 | 0 = no sun, light or screen space lens flares. |
+| `ParticleFlare` | 1 | 0 = no flares from sparks, explosions and lights. |
+| `FixPowerplayIconSize` | 1 | Powerplay icons and route change markers at console size at every resolution. 0 = stock. |
+
+**[World]**
+
+| Key | Default | Meaning |
+|---|---|---|
+| `StreamPoolMB` | 512 | Streaming pool in MB, 0 = stock (57). Only used when the exe has the LAA flag. |
 | `LodDistanceScale` | 2.0 | Multiplier for LOD, streaming, particle, debris and powerplay distances (0.5–8). |
 | `PopInFix` | 1 | Ignore the sectors' precomputed visibility lists. 0 = stock. |
-| `Vignette` | 0 | 1 = keep the cameras' darkened screen edges. |
+
+**[Gameplay]**
+
+| Key | Default | Meaning |
+|---|---|---|
 | `UnlockAll` | 0 | 1 = all tracks, events, episodes, game modes and vehicles selectable (the game's own switches; the profile is not changed). |
 | `BonusContent` | 0 | 1 = the PC version's cheat code extras: Expressway track, Cobretti SlipStream, retailer branded cars, Euro livery pack. |
 | `Boost` | 0 | 1 = X held gives player 1 extra speed along the car's heading. |
@@ -202,10 +228,17 @@ The one exception is `RenderScale` set to a number (see Known limitations).
 | `PowerBarFill` | 0 | 1 = LS+RS (both sticks pressed) fills player 1's power play bar. |
 | `AIBoost` | 0 | Experimental: 1 = AI cars boost in bursts while behind player 1 or not far ahead. |
 | `AIBoostLevel` | 2 | 1 easy (0.8× your boost, 3 s tank, up to 30 m ahead), 2 normal (1×, 5 s, about once a second, 60 m), 3 hard (1.3×, 8 s, almost constantly, 150 m). |
-| `AIBoostUnlimited` | 0 | 1 = the AI's boost tank never empties (chaos mode). |
+| `AIBoostUnlimited` | 0 | 1 = the AI's boost tank never empties. |
 | `AIBoostStraightOnly` | 1 | 1 = AI boosts only on straights at speed, 0 = anywhere while driving forward. |
 | `AIBoostChaos` | 0 | 1 = chaos mode: level 3, endless tank, anywhere, also far ahead of you. Overrides the three keys above while set. |
-| `[Debug] PatchMask` | 0xFFFFFFFF | Development: bit mask of the patches that may be applied (`PATCH_*` in `src/common.h`). |
+
+**[Debug]**
+
+| Key | Default | Meaning |
+|---|---|---|
+| `Log` | 0 | 1 = write `SplitSecondPad.log` (Direct3D device, FMOD events, music state, SecuROM VM contexts, every change of the profile `.sav` files). |
+| `TestFeed`, `Profile` | 0 | Development only: pad state from shared memory (`tools/padfeed.py`), call counters. |
+| `PatchMask` | 0xFFFFFFFF | Development: bit mask of the patches that may be applied (`PATCH_*` in `src/common.h`). |
 
 ## Known limitations
 

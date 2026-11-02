@@ -27,6 +27,9 @@ struct Config {
     int   anisotropy;        // forced anisotropic filtering, 0/1 = game default
     float lodDistanceScale;  // environment, particle and powerplay draw distances
     bool  vignette;          // keep the cameras' screen edge darkening
+    bool  bloom;             // bloom added to the frame (tone mapping stays)
+    bool  lensFlare;         // sun, light and screen space lens flares
+    bool  particleFlare;     // flares of sparks, explosions and lights
     bool  popInFix;          // ignore the sectors' precomputed visibility lists (distance and frustum only)
     bool  unlockAll;         // all tracks, events, episodes, game modes and vehicles selectable
     bool  bonusContent;      // the PC cheat code extras: Expressway track, branded cars, liveries
@@ -48,7 +51,7 @@ enum PatchBits {
     PATCH_FRAMERATE = 0x10, PATCH_STREAMPOOL = 0x20, PATCH_ICONSIZE = 0x40, PATCH_MOTIONBLUR = 0x80,
     PATCH_RENDERSCALE = 0x100, PATCH_PADNAMES = 0x200, PATCH_LOD = 0x400, PATCH_D3D = 0x800,
     PATCH_AUDIODIAG = 0x1000, PATCH_VIGNETTE = 0x2000,
-    PATCH_UNLOCK = 0x4000, PATCH_SAVEDIAG = 0x8000, PATCH_ROUTEMARKER = 0x10000, PATCH_BOOST = 0x20000, PATCH_AIBOOST = 0x40000,
+    PATCH_UNLOCK = 0x4000, PATCH_SAVEDIAG = 0x8000, PATCH_ROUTEMARKER = 0x10000, PATCH_BOOST = 0x20000, PATCH_AIBOOST = 0x40000, PATCH_FLARES = 0x80000,
     PATCH_ALL = 0xFFFFFFFF
 };
 
@@ -97,6 +100,8 @@ void ProfilerTick();
 // postfx.cpp
 void PatchMotionBlur();
 void PatchVignette();
+void PatchBloomAndFlares();
+void ApplyLensFlare();  // per frame
 
 // boost.cpp
 void BoostTick();        // per input frame: boost on X, power bar fill on LS+RS

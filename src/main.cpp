@@ -42,29 +42,69 @@ void Log(const char* fmt, ...)
     LeaveCriticalSection(&s_logLock);
 }
 
-static float IniFloat(const char* ini, const char* key, float def)
+// Keys are looked up in their section; INIs from before the sections were split kept the game
+// options in [Game] and the debug options in [Controller], so those are read as a fallback.
+static char s_ini[MAX_PATH];
+
+static void IniString(const char* section, const char* key, const char* def, char* out, DWORD size)
 {
-    char buf[32], defs[32];
-    sprintf_s(defs, "%g", def);
-    GetPrivateProfileStringA("Controller", key, defs, buf, sizeof(buf), ini);
-    return (float)atof(buf);
+    static const char kMissing[] = "\x01";
+    GetPrivateProfileStringA(section, key, kMissing, out, size, s_ini);
+    if (strcmp(out, kMissing)) return;
+    GetPrivateProfileStringA(!strcmp(section, "Debug") ? "Controller" : "Game", key, def, out, size, s_ini);
+}
+
+static int IniInt(const char* section, const char* key, int def)
+{
+    char buf[32];
+    IniString(section, key, "", buf, sizeof(buf));
+    return buf[0] ? (int)strtol(buf, NULL, 0) : def;
+}
+
+static bool IniBool(const char* section, const char* key, bool def)
+{
+    return IniInt(section, key, def ? 1 : 0) != 0;
+}
+
+static float IniFloat(const char* section, const char* key, float def, float lo, float hi)
+{
+    char buf[32];
+    IniString(section, key, "", buf, sizeof(buf));
+    float v = buf[0] ? (float)atof(buf) : def;
+    return v < lo ? lo : v > hi ? hi : v;
 }
 
 static void LoadConfig()
 {
-    char ini[MAX_PATH];
-    ModulePath(ini, "SplitSecondPad.ini");
-    g_cfg.virtualPads = GetPrivateProfileIntA("Controller", "VirtualPads", 4, ini);
+    ModulePath(s_ini, "SplitSecondPad.ini");
+
+    // [Debug] first, so the log is open for everything below
+    g_cfg.log = IniBool("Debug", "Log", false);
+    g_cfg.testFeed = IniBool("Debug", "TestFeed", false);
+    g_cfg.profile = IniBool("Debug", "Profile", false);
+    if (g_cfg.log) {
+        char path[MAX_PATH];
+        ModulePath(path, "SplitSecondPad.log");
+        s_log = _fsopen(path, "w", _SH_DENYWR);
+    }
+    {
+        char buf[32];
+        IniString("Debug", "PatchMask", "0xFFFFFFFF", buf, sizeof(buf));
+        g_cfg.patchMask = strtoul(buf, NULL, 0);
+        if (g_cfg.patchMask != PATCH_ALL) Log("patch mask 0x%X", g_cfg.patchMask);
+    }
+
+    // [Controller]
+    g_cfg.virtualPads = IniInt("Controller", "VirtualPads", 4);
     if (g_cfg.virtualPads < 0) g_cfg.virtualPads = 0;
     if (g_cfg.virtualPads > XUSER_MAX_COUNT) g_cfg.virtualPads = XUSER_MAX_COUNT;
-    g_cfg.hideXInputDevices = GetPrivateProfileIntA("Controller", "HideXInputFromDirectInput", 1, ini) != 0;
-    g_cfg.separateTriggers = GetPrivateProfileIntA("Controller", "SeparateTriggers", 1, ini) != 0;
-    g_cfg.stickDeadzone = IniFloat(ini, "StickDeadzone", 0.15f);
-    g_cfg.triggerDeadzone = IniFloat(ini, "TriggerDeadzone", 0.05f);
-    g_cfg.rumbleScale = IniFloat(ini, "RumbleStrength", 1.0f);
-
+    g_cfg.hideXInputDevices = IniBool("Controller", "HideXInputFromDirectInput", true);
+    g_cfg.separateTriggers = IniBool("Controller", "SeparateTriggers", true);
+    g_cfg.stickDeadzone = IniFloat("Controller", "StickDeadzone", 0.15f, 0.0f, 1.0f);
+    g_cfg.triggerDeadzone = IniFloat("Controller", "TriggerDeadzone", 0.05f, 0.0f, 1.0f);
+    g_cfg.rumbleScale = IniFloat("Controller", "RumbleStrength", 1.0f, 0.0f, 10.0f);
     char glyphs[32];
-    GetPrivateProfileStringA("Controller", "ButtonGlyphs", "xbox", glyphs, sizeof(glyphs), ini);
+    IniString("Controller", "ButtonGlyphs", "xbox", glyphs, sizeof(glyphs));
     if (!_stricmp(glyphs, "playstation") || !_stricmp(glyphs, "ps"))
         g_cfg.glyphs = GLYPHS_AUTO_PS;
     else if (!_stricmp(glyphs, "keyboard") || !_stricmp(glyphs, "off"))
@@ -72,66 +112,52 @@ static void LoadConfig()
     else
         g_cfg.glyphs = GLYPHS_AUTO_XBOX;
 
-    g_cfg.log = GetPrivateProfileIntA("Controller", "Log", 0, ini) != 0;
-    g_cfg.testFeed = GetPrivateProfileIntA("Controller", "TestFeed", 0, ini) != 0;
-    g_cfg.profile = GetPrivateProfileIntA("Controller", "Profile", 0, ini) != 0;
-    g_cfg.frameRate = GetPrivateProfileIntA("Game", "FrameRate", 60, ini) == 30 ? 30 : 60;
-    if (g_cfg.log) {
-        char path[MAX_PATH];
-        ModulePath(path, "SplitSecondPad.log");
-        s_log = _fsopen(path, "w", _SH_DENYWR);
-    }
-    g_cfg.streamPoolMB = GetPrivateProfileIntA("Game", "StreamPoolMB", 512, ini);
-    g_cfg.fixIconSize = GetPrivateProfileIntA("Game", "FixPowerplayIconSize", 1, ini) != 0;
+    // [Graphics]
+    g_cfg.frameRate = IniInt("Graphics", "FrameRate", 60) == 30 ? 30 : 60;
     {
         char buf[32];
-        GetPrivateProfileStringA("Game", "MotionBlurStrength", "1.0", buf, sizeof(buf), ini);
-        g_cfg.motionBlurStrength = (float)atof(buf);
-        GetPrivateProfileStringA("Game", "RenderScale", "auto", buf, sizeof(buf), ini);
+        IniString("Graphics", "RenderScale", "auto", buf, sizeof(buf));
         float rs = (float)atof(buf);  // "auto" reads as 0
         g_cfg.renderScale = rs <= 0 ? 0 : rs < 0.5f ? 0.5f : rs > 4.0f ? 4.0f : rs;
-        GetPrivateProfileStringA("Game", "LodDistanceScale", "2.0", buf, sizeof(buf), ini);
-        float lod = (float)atof(buf);
-        g_cfg.lodDistanceScale = lod < 0.5f ? 1.0f : lod > 8.0f ? 8.0f : lod;
     }
-    g_cfg.vignette = GetPrivateProfileIntA("Game", "Vignette", 0, ini) != 0;
-    g_cfg.popInFix = GetPrivateProfileIntA("Game", "PopInFix", 1, ini) != 0;
-    g_cfg.unlockAll = GetPrivateProfileIntA("Game", "UnlockAll", 0, ini) != 0;
-    g_cfg.bonusContent = GetPrivateProfileIntA("Game", "BonusContent", 0, ini) != 0;
-    g_cfg.boost = GetPrivateProfileIntA("Game", "Boost", 0, ini) != 0;
-    g_cfg.powerFill = GetPrivateProfileIntA("Game", "PowerBarFill", 0, ini) != 0;
-    g_cfg.aiBoost = GetPrivateProfileIntA("Game", "AIBoost", 0, ini) != 0;
-    g_cfg.aiBoostLevel = GetPrivateProfileIntA("Game", "AIBoostLevel", 2, ini);
+    g_cfg.anisotropy = IniInt("Graphics", "Anisotropy", 16);
+    if (g_cfg.anisotropy > 16) g_cfg.anisotropy = 16;
+    g_cfg.motionBlurStrength = IniFloat("Graphics", "MotionBlurStrength", 1.0f, 0.0f, 10.0f);
+    g_cfg.vignette = IniBool("Graphics", "Vignette", false);
+    g_cfg.bloom = IniBool("Graphics", "Bloom", true);
+    g_cfg.lensFlare = IniBool("Graphics", "LensFlare", true);
+    g_cfg.particleFlare = IniBool("Graphics", "ParticleFlare", true);
+    g_cfg.fixIconSize = IniBool("Graphics", "FixPowerplayIconSize", true);
+
+    // [World]
+    g_cfg.streamPoolMB = IniInt("World", "StreamPoolMB", 512);
+    {
+        float lod = IniFloat("World", "LodDistanceScale", 2.0f, 0.0f, 8.0f);
+        g_cfg.lodDistanceScale = lod < 0.5f ? 1.0f : lod;
+    }
+    g_cfg.popInFix = IniBool("World", "PopInFix", true);
+
+    // [Gameplay]
+    g_cfg.unlockAll = IniBool("Gameplay", "UnlockAll", false);
+    g_cfg.bonusContent = IniBool("Gameplay", "BonusContent", false);
+    g_cfg.boost = IniBool("Gameplay", "Boost", false);
+    g_cfg.boostAcceleration = IniFloat("Gameplay", "BoostAcceleration", 15.0f, 1.0f, 100.0f);
+    g_cfg.boostMaxSpeed = IniFloat("Gameplay", "BoostMaxSpeed", 90.0f, 10.0f, 200.0f);
+    g_cfg.boostMotionBlur = IniFloat("Gameplay", "BoostMotionBlur", 3.0f, 1.0f, 5.0f);
+    g_cfg.powerFill = IniBool("Gameplay", "PowerBarFill", false);
+    g_cfg.aiBoost = IniBool("Gameplay", "AIBoost", false);
+    g_cfg.aiBoostLevel = IniInt("Gameplay", "AIBoostLevel", 2);
     if (g_cfg.aiBoostLevel < 1) g_cfg.aiBoostLevel = 1;
     if (g_cfg.aiBoostLevel > 3) g_cfg.aiBoostLevel = 3;
-    g_cfg.aiBoostUnlimited = GetPrivateProfileIntA("Game", "AIBoostUnlimited", 0, ini) != 0;
-    g_cfg.aiBoostStraightOnly = GetPrivateProfileIntA("Game", "AIBoostStraightOnly", 1, ini) != 0;
-    g_cfg.aiBoostChaos = GetPrivateProfileIntA("Game", "AIBoostChaos", 0, ini) != 0;
+    g_cfg.aiBoostUnlimited = IniBool("Gameplay", "AIBoostUnlimited", false);
+    g_cfg.aiBoostStraightOnly = IniBool("Gameplay", "AIBoostStraightOnly", true);
+    g_cfg.aiBoostChaos = IniBool("Gameplay", "AIBoostChaos", false);
     if (g_cfg.aiBoostChaos) {
         g_cfg.aiBoostLevel = 3;
         g_cfg.aiBoostUnlimited = true;
         g_cfg.aiBoostStraightOnly = false;
     }
-    {
-        char buf[32];
-        GetPrivateProfileStringA("Game", "BoostAcceleration", "15", buf, sizeof(buf), ini);
-        float a = (float)atof(buf);
-        g_cfg.boostAcceleration = a < 1.0f ? 1.0f : a > 100.0f ? 100.0f : a;
-        GetPrivateProfileStringA("Game", "BoostMaxSpeed", "90", buf, sizeof(buf), ini);
-        float v = (float)atof(buf);
-        g_cfg.boostMaxSpeed = v < 10.0f ? 10.0f : v > 200.0f ? 200.0f : v;
-        GetPrivateProfileStringA("Game", "BoostMotionBlur", "3.0", buf, sizeof(buf), ini);
-        float m = (float)atof(buf);
-        g_cfg.boostMotionBlur = m < 1.0f ? 1.0f : m > 5.0f ? 5.0f : m;
-    }
-    g_cfg.anisotropy = GetPrivateProfileIntA("Game", "Anisotropy", 16, ini);
-    if (g_cfg.anisotropy > 16) g_cfg.anisotropy = 16;
-    {
-        char buf[32];
-        GetPrivateProfileStringA("Debug", "PatchMask", "0xFFFFFFFF", buf, sizeof(buf), ini);
-        g_cfg.patchMask = strtoul(buf, NULL, 0);
-        if (g_cfg.patchMask != PATCH_ALL) Log("patch mask 0x%X", g_cfg.patchMask);
-    }
+
     Log("frame rate %d, stream pool %d MB", g_cfg.frameRate, g_cfg.streamPoolMB);
     Log("config: pads=%d hide=%d triggers=%d stickdz=%.2f trigdz=%.2f rumble=%.2f glyphs=%d",
         g_cfg.virtualPads, g_cfg.hideXInputDevices, g_cfg.separateTriggers, g_cfg.stickDeadzone,

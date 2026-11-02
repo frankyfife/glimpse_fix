@@ -592,6 +592,7 @@ void OnInputFrame()
     }
     if (s_knownBuild && g_cfg.fixIconSize && (g_cfg.patchMask & PATCH_ICONSIZE)) FixPowerplayIconSize();
     if (s_knownBuild && (g_cfg.patchMask & PATCH_UNLOCK)) ApplyUnlocks();
+    if (s_knownBuild && (g_cfg.patchMask & PATCH_FLARES)) ApplyLensFlare();
     if (s_knownBuild && (g_cfg.boost || g_cfg.powerFill || g_cfg.aiBoost) && (g_cfg.patchMask & PATCH_BOOST)) BoostTick();
     if (g_cfg.log && s_knownBuild) WatchVmContexts();
     if (g_cfg.log && (g_cfg.patchMask & PATCH_SAVEDIAG)) WatchSaveFiles();
@@ -664,6 +665,7 @@ void ApplyGamePatches()
     if (mask & PATCH_STREAMPOOL) RaiseStreamPool();
     if (mask & PATCH_MOTIONBLUR) PatchMotionBlur();
     if (mask & PATCH_VIGNETTE) PatchVignette();
+    if (mask & PATCH_FLARES) PatchBloomAndFlares();
     if (mask & PATCH_RENDERSCALE) PatchRenderScale();
     if (g_cfg.profile) InstallProfiler();
     if (g_cfg.log && (mask & PATCH_AUDIODIAG)) InstallAudioDiagnostics();
