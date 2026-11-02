@@ -14,7 +14,8 @@ adds what the port never had:
   distances
 * Powerplay icons at console size on high resolutions, motion blur matched to 60 fps, optional
   vignette, anisotropic filtering, internal render resolution independent of the quality option
-* **Extras nobody else has** (off by default, one line each in the INI) — see below
+* **Extras nobody else has** (off by default) — see below
+* **A settings program** (`glimpse_config.exe`) instead of editing the INI by hand
 
 No game files are modified at runtime, and the game's code is not changed either: everything works
 through the game's own data, after checking the expected bytes. The game's copy protection
@@ -32,9 +33,12 @@ Split/Second never had a boost. Now it does — and it feels like it belongs the
 | **Full Power Play bar** | Press **LS + RS** (both sticks) and the power play bar is full: drop a building on the leader whenever you like. | `PowerBarFill=1` |
 | **Everything unlocked** | All tracks, events, episodes, game modes and cars selectable from the start, using the game's own switches. Your profile is not changed; set it back to 0 and everything is as you earned it. | `UnlockAll=1` |
 | **Bonus content** | The extras the PC version hid behind cheat codes: the **Expressway** track, the Cobretti SlipStream, the retailer branded cars and the Euro livery pack. | `BonusContent=1` |
+| **Skip the intro** | Skip the publisher logo, or the logo and the intro, at every start. The movie files stay untouched. | `SkipIntro=1` / `2` |
 
-Tune the boost with `BoostAcceleration` (m/s², default 15 ≈ 1.5 g), `BoostMaxSpeed` (m/s, default 90)
-and `BoostMotionBlur` (1–5), the AI boost with `AIBoostLevel`, `AIBoostUnlimited`, `AIBoostStraightOnly` or simply `AIBoostChaos`. Like everything else here, the extras only change game data, never game
+All of them can be switched in `glimpse_config.exe` (*Gameplay*). Tune the boost with
+`BoostAcceleration` (m/s², default 15 ≈ 1.5 g), `BoostMaxSpeed` (m/s, default 90) and
+`BoostMotionBlur` (1–5), the AI boost with `AIBoostLevel`, `AIBoostUnlimited`, `AIBoostStraightOnly`
+or simply `AIBoostChaos`. Like everything else here, the extras only change game data, never game
 code, so they are safe with the copy protection.
 
 > **Compatibility: Steam version only.** Developed and tested exclusively with the Steam release
@@ -97,7 +101,9 @@ by the loop, so 60 fps work without changing its code:
   resolution timer, sets "max ticks" to the number of 1/60 s steps that have passed (1, more after
   a slow frame) and tops the accumulator up so the loop finds that many ticks and never sleeps.
 * Each AI car is updated every other frame and drives on its last inputs in between, exactly as
-  at 30 fps with two ticks per update (the AI player's vtable slot).
+  at 30 fps with two ticks per update (the AI player's vtable slot). Restarting a race clears each
+  AI car's track section and the next update finds it again, so that update is never skipped:
+  another AI method reads the section every frame.
 * Above 60 fps would need render interpolation, since the ticks are fixed at 1/60 s.
 
 ### Blurry / missing textures and props
@@ -164,10 +170,12 @@ loop, and that part is checked about 6½ minutes after launch.
 How the fix avoids it: **no game code is changed at all.** Everything works through
 
 * values in the game's data: tweakables and their records (frame pacing, streaming pool, LOD and
-  streaming distances, debug and unlock switches), loaded HUD parameters, powerplay distance
-  records, the main loop's accumulator, the power bar and the player car's chassis velocity,
-* swapped vtable slots (motion blur and grading passes, AI player update), the import table entry
-  of `XInputSetState`, read-only strings and constants (prompt bar icon paths, route marker size),
+  streaming distances, debug, unlock and lens flare switches, AI skill limits), loaded HUD
+  parameters, powerplay distance records, the main loop's accumulator, the power bar, the AI skill
+  and the cars' chassis velocity,
+* swapped vtable slots (motion blur, grading, bloom and particle flare passes, AI player update),
+  import table entries (`XInputSetState`, Bink's `BinkOpen`/`BinkWait`/`BinkDoFrame`), read-only
+  strings and constants (prompt bar icon paths, route marker size),
 * the Direct3D device's vtable, and calls into the game's own functions (dictionary lookup,
   Scaleform `Invoke`/`SetVariable`) from the input poll.
 
@@ -307,7 +315,10 @@ part of this repository.
 | `0x00558880` | Main loop: measure frame time, accumulate ticks, `Update(ticks)`, `Render` |
 | `0x00D747F4`, `0x00D747F0`, `0x00D199D8` | Main loop accumulator, its tick counter (`Sleep(5)` at 5), "max ticks" tweakable (10) |
 | `0x00BA0C14` | 1/30, shared by the main loop, the AI steering controller `0x524AC0`, AI look-ahead grids and data conversions |
-| `0x00BC0BC0` | `cAIPlayer` vtable slot of the AI player update `0x51A8B0` |
+| `0x00BC0BC0` | `cAIPlayer` vtable slot of the AI player update `0x51A8B0`; the AI's skill (0–1) at +0x24 |
+| `0x00BC0BF8` | `cAIPlayer` vtable slot 17 `0x51A550`, every frame: reads the track section `[[[ai+0x18]]+0x28]+0x54` (NULL after a restart until the next update) |
+| `0x00D17044` … `0x00D1705C` | AI catch-up skill limits (initial/final min and max, 8 bytes apart) |
+| `0x00D72534` | "SSAI/Debug Cheats/AI Full Power Bar" |
 | `0x00D389E0`, `0x00D389E4` | Tweakable "Sectors/Streaming Memory Pool MB" (57), read on level load (`0x7C654F`); its record (vtable `0xBB2498`, +4 variable) |
 | `0x00D66B28` | `cInGameResources`: +0xE4 `cGameLogic` (+0x18 player count, +0x1C players); player +0xE8 `cPowerBar` (+0x2C output, +8 power 0–100), +0xAC `cVehicleState` (+0x40 vehicles, +4 + i×4); vehicle +0x584 chassis `hkpRigidBody` (+0x100 forward, +0x110 position, +0x1A0 velocity) |
 | `0x00D6FC54`, `0x00D6FBA0`, `0x00D7D978`, `0x00D6F8F0` | UI/All Gamemodes / Episodes / Events / Vehicles Unlocked |
@@ -317,6 +328,9 @@ part of this repository.
 | `0x00D66B24` | HUD; parameters at +0x20, powerplay icon scales +0x214/+0x218 |
 | `0x00BB8494` | Route change marker size factor 2.25/1280 (read only by `0x4C7910`) |
 | `0x00BB42B0`, `0x00BB4048` | vtable slots of the motion blur pass `0x49B490` and the grading/vignette pass `0x49A7A0` |
+| `0x00BB3678`, `0x00BB39B8` | vtable slots of the bloom/tone mapping pass `0x492F50` (parameters: +0x38 bloom add, +0x3C/+0x40 bright pass, +0x58 add curve, +0x20 exposure) and the particle flare pass `0x496C60` |
+| `0x00D10A3C`, `0x00D37D08` | "PostProcess/SSLensFlare/z; Enable", "LensFlare/Config/a; Enable" |
+| `0x00B9B39C`, `0x00B9B3B0`, `0x00B9B380` | Import table: `BinkOpen`, `BinkWait`, `BinkDoFrame` (boot movies: `data/movies/bootup`) |
 | `0x01E0266A` | SecuROM VM context table (10 entries, +0x24 = `0x66666666` while in use) |
 | `0x00A15BF0` | Dictionary lookup, key → UTF-8 text |
 | `0x008674F0` | FMOD init: DirectSound, `setSpeakerMode(5POINT1)` |
