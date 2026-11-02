@@ -4,6 +4,7 @@
 // INI next to it, or one picked with the file dialog. Values are changed in place, so comments, order and
 // unknown keys stay as they are; a key that is missing is added to its section. Every change is saved at
 // once: the bloom and exposure values are read by the game every 2 s, everything else at the next start.
+// Before the first change the INI as it was opened is kept as SplitSecondPad.ini.bak.
 #define WIN32_LEAN_AND_MEAN
 #ifndef _CRT_SECURE_NO_WARNINGS
 #define _CRT_SECURE_NO_WARNINGS
@@ -126,16 +127,28 @@ static bool LoadIni()
     return true;
 }
 
-static bool SaveIni()
+// SplitSecondPad.ini.bak: the INI as it was when the program opened it, written before the first change
+static std::vector<std::string> s_opened;
+static bool s_backedUp;
+
+static std::string BackupPath() { return std::string(s_path) + ".bak"; }
+
+static bool SaveLines(const char* path, const std::vector<std::string>& lines)
 {
-    FILE* f = fopen(s_path, "wb");
+    FILE* f = fopen(path, "wb");
     if (!f) return false;
-    for (const std::string& l : s_lines) {
+    for (const std::string& l : lines) {
         fputs(l.c_str(), f);
         fputs(s_crlf ? "\r\n" : "\n", f);
     }
     fclose(f);
     return true;
+}
+
+static bool SaveIni()
+{
+    if (!s_backedUp && !s_opened.empty()) s_backedUp = SaveLines(BackupPath().c_str(), s_opened);
+    return SaveLines(s_path, s_lines);
 }
 
 // line index of key in section, -1 if missing; *sectionEnd gets the line after the section's last key
@@ -210,6 +223,7 @@ static bool s_loading;
 static bool s_toggle[64];  // BOOL_OPT state by option index
 static int s_choice[64];   // CHOICE: selected item by option index, -1 = a value set by hand
 static std::string s_custom[64];  // that value
+static const char kSliderClass[] = "glimpse_slider";  // the own slider control, see SliderProc
 
 static int S(int px) { return MulDiv(px, s_dpi, 96); }
 
@@ -349,7 +363,9 @@ static void ShowValue(Option& o, double v)
     std::string text = FormatRange(o, v);
     if (!strcmp(o.key, "BoostMaxSpeed")) text += " m/s  " + std::to_string((int)(v * 3.6 + 0.5)) + " km/h";
     else if (!strcmp(o.key, "BoostAcceleration")) text += " m/s per s";
-    else if (o.decimals) text += "x";
+    else if (strstr(o.key, "Strength") || strstr(o.key, "Blur") || strstr(o.key, "Bloom") || strstr(o.key, "Scale") ||
+             !strcmp(o.key, "Exposure"))
+        text += "x";
     SetWindowTextA(o.value, text.c_str());
 }
 
@@ -403,6 +419,7 @@ static void LoadControls()
             if (d < o.lo) d = o.lo;
             if (d > o.hi) d = o.hi;
             SendMessageA(o.ctrl, TBM_SETPOS, TRUE, (LPARAM)(int)((d - o.lo) / o.step + 0.5));
+            InvalidateRect(o.ctrl, NULL, TRUE);
             ShowValue(o, d);
         }
     }
@@ -423,6 +440,7 @@ static void Changed(Option& o)
         v = items[sel].first;
     } else {
         double d = o.lo + SendMessageA(o.ctrl, TBM_GETPOS, 0, 0) * o.step;
+        InvalidateRect(o.ctrl, NULL, TRUE);
         ShowValue(o, d);
         v = FormatRange(o, d);
     }
@@ -495,7 +513,7 @@ static HWND Child(const char* cls, const char* text, DWORD style, int x, int y, 
     return h_;
 }
 
-enum { ID_NAV0 = 10, ID_PRESET0 = 20, ID_OPEN = 30, ID_CLOSE = 31, ID_OPTION0 = 100 };
+enum { ID_NAV0 = 10, ID_PRESET0 = 20, ID_OPEN = 30, ID_CLOSE = 31, ID_RESTORE = 32, ID_OPTION0 = 100 };
 
 // layout, in 96 dpi pixels
 static const int kWidth = 880, kHeight = 660, kSideW = 210, kContentX = 240, kLabelW = 300, kRowH = 33, kRowTop = 100;
@@ -533,17 +551,17 @@ static void CreateControls()
         } else if (o.kind == CHOICE) {
             o.ctrl = Child("BUTTON", "", WS_TABSTOP | BS_OWNERDRAW, S(ctrlX), y, S(250), S(28), id, R_SELECT, s_font);
         } else {
-            o.ctrl = Child(TRACKBAR_CLASSA, "", WS_TABSTOP | TBS_HORZ | TBS_NOTICKS | TBS_BOTH, S(ctrlX) - S(6), y, S(200),
-                           S(26), id, R_NONE, s_font);
+            o.ctrl = Child(kSliderClass, "", WS_TABSTOP, S(ctrlX) - S(6), y, S(200), S(26), id, R_NONE, s_font);
             SendMessageA(o.ctrl, TBM_SETRANGE, TRUE, MAKELPARAM(0, RangeSteps(o)));
-            SendMessageA(o.ctrl, TBM_SETPAGESIZE, 0, max(1, RangeSteps(o) / 10));
             o.value = Child("STATIC", "", SS_LEFT | SS_CENTERIMAGE, S(ctrlX) + S(200), y, S(140), S(26), 0, R_VALUE, s_font);
         }
     }
     s_info = Child("STATIC", "", WS_VISIBLE | SS_LEFT, S(kContentX), S(kHeight - 104), S(kWidth - kContentX - 24), S(42), 0,
                    R_DIM, s_font);
     s_status = Child("STATIC", "", WS_VISIBLE | SS_LEFT | SS_PATHELLIPSIS | SS_CENTERIMAGE, S(kContentX), S(kHeight - 46),
-                     S(380), S(30), 0, R_DIM, s_fontSmall);
+                     S(kWidth - 400 - kContentX), S(30), 0, R_DIM, s_fontSmall);
+    Child("BUTTON", "Restore backup", WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW, S(kWidth - 386), S(kHeight - 48), S(140),
+          S(32), ID_RESTORE, R_ACTION, s_font);
     Child("BUTTON", "Open INI...", WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW, S(kWidth - 236), S(kHeight - 48), S(104), S(32),
           ID_OPEN, R_ACTION, s_font);
     Child("BUTTON", "Close", WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW, S(kWidth - 122), S(kHeight - 48), S(104), S(32),
@@ -568,7 +586,10 @@ static bool PickIni(HWND owner)
 
 static void Open()
 {
-    if (!LoadIni()) {
+    s_backedUp = false;
+    s_opened.clear();
+    if (LoadIni()) s_opened = s_lines;
+    if (s_opened.empty()) {
         s_lines.clear();
         Status("No SplitSecondPad.ini here yet: it is created with the first change.");
     } else {
@@ -576,6 +597,25 @@ static void Open()
         Status(msg.c_str());
     }
     LoadControls();
+}
+
+// puts the backup back and reloads it
+static void RestoreBackup(HWND wnd)
+{
+    std::string bak = BackupPath();
+    if (GetFileAttributesA(bak.c_str()) == INVALID_FILE_ATTRIBUTES) {
+        MessageBoxA(wnd, "There is no backup yet. It is made before the first change.", "glimpse_fix", MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+    std::string q = "Replace the settings with the backup?\n\n" + bak;
+    if (MessageBoxA(wnd, q.c_str(), "glimpse_fix", MB_YESNO | MB_ICONQUESTION) != IDYES) return;
+    if (!CopyFileA(bak.c_str(), s_path, FALSE)) {
+        Status("Could not restore the backup");
+        return;
+    }
+    Open();
+    s_backedUp = true;  // keep the backup as it is
+    Status("Backup restored");
 }
 
 // ---------------------------------------------------------------- drawing
@@ -658,34 +698,136 @@ static void DrawButton(const DRAWITEMSTRUCT* di)
     DrawTextA(dc, text, -1, &r, DT_SINGLELINE | DT_VCENTER | DT_CENTER);
 }
 
-// the slider: a thin track, filled up to the thumb, and a round thumb
-static LRESULT DrawSlider(NMCUSTOMDRAW* cd)
+// The slider: an own control instead of the common trackbar, which only repaints the area of its own
+// (narrow) thumb and left parts of the round one behind. It understands the trackbar messages used here
+// (TBM_SETRANGE, TBM_SETPOS, TBM_GETPOS), reports changes with WM_HSCROLL like a trackbar and draws the
+// whole control, double buffered, on every change. Mouse: click or drag; keys: arrows, Page Up/Down,
+// Home, End.
+static int SliderPos(HWND h) { return (int)GetWindowLongPtrA(h, 0); }
+static int SliderMax(HWND h) { return (int)GetWindowLongPtrA(h, sizeof(LONG_PTR)); }
+
+static void SliderTrack(HWND h, int* x0, int* x1)
 {
-    if (cd->dwDrawStage == CDDS_PREPAINT) return CDRF_NOTIFYITEMDRAW;
-    if (cd->dwDrawStage != CDDS_ITEMPREPAINT) return CDRF_DODEFAULT;
-    bool enabled = IsWindowEnabled(cd->hdr.hwndFrom) != 0;
-    HDC dc = cd->hdc;
-    if (cd->dwItemSpec == TBCD_CHANNEL) {
-        RECT thumb;
-        SendMessageA(cd->hdr.hwndFrom, TBM_GETTHUMBRECT, 0, (LPARAM)&thumb);
-        RECT c = cd->rc;
-        int mid = (c.top + c.bottom) / 2;
-        RECT all = { c.left, mid - S(2), c.right, mid + S(2) };
-        RoundRect(dc, all, S(4), kField, kField);
-        RECT done = { c.left, mid - S(2), (thumb.left + thumb.right) / 2, mid + S(2) };
-        COLORREF a = enabled ? kAccent : kOff;
-        RoundRect(dc, done, S(4), a, a);
-        return CDRF_SKIPDEFAULT;
+    RECT r;
+    GetClientRect(h, &r);
+    int radius = S(8) + 1;
+    *x0 = r.left + radius;
+    *x1 = r.right - radius;
+}
+
+static void SliderSet(HWND h, int pos, bool notify)
+{
+    int max = SliderMax(h);
+    if (pos < 0) pos = 0;
+    if (pos > max) pos = max;
+    if (pos == SliderPos(h)) return;
+    SetWindowLongPtrA(h, 0, pos);
+    InvalidateRect(h, NULL, FALSE);
+    if (notify) SendMessageA(GetParent(h), WM_HSCROLL, MAKEWPARAM(TB_THUMBTRACK, pos), (LPARAM)h);
+}
+
+static void SliderFromMouse(HWND h, int x)
+{
+    int x0, x1, max = SliderMax(h);
+    SliderTrack(h, &x0, &x1);
+    if (x1 <= x0 || max <= 0) return;
+    SliderSet(h, (int)(((double)(x - x0) / (x1 - x0)) * max + 0.5), true);
+}
+
+static void SliderPaint(HWND h)
+{
+    PAINTSTRUCT ps;
+    HDC wdc = BeginPaint(h, &ps);
+    RECT r;
+    GetClientRect(h, &r);
+    HDC dc = CreateCompatibleDC(wdc);
+    HBITMAP bmp = CreateCompatibleBitmap(wdc, r.right, r.bottom);
+    HGDIOBJ old = SelectObject(dc, bmp);
+    FillRect(dc, &r, s_backBrush);
+
+    bool enabled = IsWindowEnabled(h) != 0, focus = GetFocus() == h;
+    int x0, x1, max = SliderMax(h), pos = SliderPos(h);
+    SliderTrack(h, &x0, &x1);
+    int cy = (r.top + r.bottom) / 2;
+    int x = max > 0 ? x0 + (int)((double)pos / max * (x1 - x0) + 0.5) : x0;
+    RECT all = { x0, cy - S(2), x1, cy + S(2) };
+    RoundRect(dc, all, S(4), kField, kField);
+    RECT done = { x0, cy - S(2), x, cy + S(2) };
+    COLORREF accent = enabled ? kAccent : kOff;
+    if (x > x0) RoundRect(dc, done, S(4), accent, accent);
+    int radius = S(8);
+    RECT knob = { x - radius, cy - radius, x + radius, cy + radius };
+    RoundRect(dc, knob, radius * 2, enabled ? RGB(255, 255, 255) : kOff, focus && enabled ? kAccent : (enabled ? RGB(255, 255, 255) : kOff));
+
+    BitBlt(wdc, 0, 0, r.right, r.bottom, dc, 0, 0, SRCCOPY);
+    SelectObject(dc, old);
+    DeleteObject(bmp);
+    DeleteDC(dc);
+    EndPaint(h, &ps);
+}
+
+static LRESULT CALLBACK SliderProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
+{
+    switch (msg) {
+    case TBM_SETRANGE:
+        SetWindowLongPtrA(h, sizeof(LONG_PTR), HIWORD(lp));
+        InvalidateRect(h, NULL, FALSE);
+        return 0;
+    case TBM_SETPOS:
+        SliderSet(h, (int)lp, false);
+        return 0;
+    case TBM_GETPOS:
+        return SliderPos(h);
+    case WM_ERASEBKGND:
+        return 1;
+    case WM_PAINT:
+        SliderPaint(h);
+        return 0;
+    case WM_LBUTTONDOWN:
+        SetFocus(h);
+        SetCapture(h);
+        SliderFromMouse(h, (short)LOWORD(lp));
+        return 0;
+    case WM_MOUSEMOVE:
+        if (GetCapture() == h) SliderFromMouse(h, (short)LOWORD(lp));
+        return 0;
+    case WM_LBUTTONUP:
+        if (GetCapture() == h) ReleaseCapture();
+        return 0;
+    case WM_KEYDOWN: {
+        int pos = SliderPos(h), max = SliderMax(h), page = max / 10 > 1 ? max / 10 : 1;
+        switch (wp) {
+        case VK_LEFT: case VK_DOWN: pos -= 1; break;
+        case VK_RIGHT: case VK_UP: pos += 1; break;
+        case VK_PRIOR: pos += page; break;
+        case VK_NEXT: pos -= page; break;
+        case VK_HOME: pos = 0; break;
+        case VK_END: pos = max; break;
+        default: return DefWindowProcA(h, msg, wp, lp);
+        }
+        SliderSet(h, pos, true);
+        return 0;
     }
-    if (cd->dwItemSpec == TBCD_THUMB) {
-        RECT t = cd->rc;
-        int size = S(16), cx = (t.left + t.right) / 2, cy = (t.top + t.bottom) / 2;
-        RECT k = { cx - size / 2, cy - size / 2, cx + size / 2, cy + size / 2 };
-        RoundRect(dc, k, size, enabled ? RGB(255, 255, 255) : kOff, enabled ? kAccent : kOff);
-        return CDRF_SKIPDEFAULT;
+    case WM_GETDLGCODE:
+        return DLGC_WANTARROWS;
+    case WM_SETFOCUS:
+    case WM_KILLFOCUS:
+    case WM_ENABLE:
+        InvalidateRect(h, NULL, FALSE);
+        return 0;
     }
-    if (cd->dwItemSpec == TBCD_TICS) return CDRF_SKIPDEFAULT;
-    return CDRF_DODEFAULT;
+    return DefWindowProcA(h, msg, wp, lp);
+}
+
+static void RegisterSlider(HINSTANCE inst)
+{
+    WNDCLASSA wc = {};
+    wc.lpfnWndProc = SliderProc;
+    wc.hInstance = inst;
+    wc.hCursor = LoadCursor(NULL, IDC_HAND);
+    wc.cbWndExtra = 2 * sizeof(LONG_PTR);  // position, maximum
+    wc.lpszClassName = kSliderClass;
+    RegisterClassA(&wc);
 }
 
 static void ShowHelpFor(HWND hwnd)
@@ -718,13 +860,6 @@ static LRESULT CALLBACK WndProc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_DRAWITEM:
         DrawButton((DRAWITEMSTRUCT*)lp);
         return TRUE;
-    case WM_NOTIFY: {
-        NMHDR* h = (NMHDR*)lp;
-        if (h->code == NM_CUSTOMDRAW)
-            for (Option& o : kOptions)
-                if (o.kind == RANGE && o.ctrl == h->hwndFrom) return DrawSlider((NMCUSTOMDRAW*)lp);
-        return 0;
-    }
     case WM_SETCURSOR:
         ShowHelpFor((HWND)wp);
         break;
@@ -761,6 +896,8 @@ static LRESULT CALLBACK WndProc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
             char q[200];
             sprintf(q, "Set every option to \"%s\"?", kPresets[id - ID_PRESET0].name);
             if (MessageBoxA(wnd, q, "glimpse_fix", MB_YESNO | MB_ICONQUESTION) == IDYES) ApplyPreset(kPresets[id - ID_PRESET0]);
+        } else if (id == ID_RESTORE) {
+            RestoreBackup(wnd);
         } else if (id == ID_OPEN) {
             if (PickIni(wnd)) Open();
         } else if (id == ID_CLOSE) {
@@ -814,8 +951,9 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE, LPSTR, int show)
     DpiAware();
     s_dpi = WindowDpi(NULL);
     EnableDarkMenus();
-    INITCOMMONCONTROLSEX icc = { sizeof(icc), ICC_BAR_CLASSES | ICC_STANDARD_CLASSES };
+    INITCOMMONCONTROLSEX icc = { sizeof(icc), ICC_STANDARD_CLASSES };
     InitCommonControlsEx(&icc);
+    RegisterSlider(inst);
     s_backBrush = CreateSolidBrush(kBack);
     s_sideBrush = CreateSolidBrush(kSide);
     s_fieldBrush = CreateSolidBrush(kField);
