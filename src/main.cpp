@@ -156,10 +156,12 @@ static void LoadConfig()
     if (g_cfg.unlockDecals < 0 || g_cfg.unlockDecals > 2) g_cfg.unlockDecals = 0;
     g_cfg.skipIntro = IniInt("Gameplay", "SkipIntro", 0);
     g_cfg.boost = IniBool("Gameplay", "Boost", false);
+    g_cfg.boostKey = IniInt("Gameplay", "BoostKey", VK_LSHIFT);
     g_cfg.boostAcceleration = IniFloat("Gameplay", "BoostAcceleration", 15.0f, 1.0f, 100.0f);
     g_cfg.boostMaxSpeed = IniFloat("Gameplay", "BoostMaxSpeed", 90.0f, 10.0f, 200.0f);
     g_cfg.boostMotionBlur = IniFloat("Gameplay", "BoostMotionBlur", 3.0f, 1.0f, 5.0f);
     g_cfg.powerFill = IniBool("Gameplay", "PowerBarFill", false);
+    g_cfg.powerFillKey = IniInt("Gameplay", "PowerBarFillKey", VK_LCONTROL);
     g_cfg.aiBoost = IniBool("Gameplay", "AIBoost", false);
     g_cfg.aiBoostLevel = IniInt("Gameplay", "AIBoostLevel", 2);
     if (g_cfg.aiBoostLevel < 1) g_cfg.aiBoostLevel = 1;

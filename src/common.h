@@ -36,10 +36,12 @@ struct Config {
     bool  bonusContent;      // the PC cheat code extras: Expressway track, branded cars, liveries
     int   unlockDecals;      // achievement decals: 0 off, 1 all, 2 only the online ones and the Pure decal (saved)
     bool  boost;             // X held: extra acceleration for player 1
+    int   boostKey;          // virtual key that works like X for the boost, 0 = none
     float boostAcceleration; // m/s^2
     float boostMaxSpeed;     // m/s, boost only below this speed
     float boostMotionBlur;   // motion blur multiplier at full boost
     bool  powerFill;         // LS+RS: power bar full
+    int   powerFillKey;      // virtual key that works like LS+RS, 0 = none
     bool  aiBoost;           // experimental: AI cars boost
     int   aiBoostLevel;      // 1 easy, 2 normal, 3 hard
     bool  aiBoostUnlimited;  // the tank never empties
@@ -115,7 +117,7 @@ void PatchBloomAndFlares();
 void ApplyLensFlare();  // per frame
 
 // boost.cpp
-void BoostTick();        // per input frame: boost on X, power bar fill on LS+RS
+void BoostTick();        // per input frame: boost on X or BoostKey, power bar fill on LS+RS or PowerBarFillKey
 float BoostBlurScale();  // motion blur multiplier while boosting (1 = none)
 
 // camera.cpp

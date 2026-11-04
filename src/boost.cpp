@@ -1,4 +1,5 @@
-// Split/Second PC fix - boost (X held), full power bar (LS+RS) for player 1, boost for the AI cars
+// Split/Second PC fix - boost (X or BoostKey held), full power bar (LS+RS or PowerBarFillKey) for player 1,
+// boost for the AI cars
 //
 // All of it works on game data reached from the in-game resources global, no code is touched:
 //   [0xD66B28] cInGameResources  +0xE4 cGameLogic (vtable 0xBA9A74): +0x18 player count, +0x1C players,
@@ -89,6 +90,20 @@ static WORD PadButtons()
     // polling empty slots is slow, so only the ones the pad wrapper has seen connected
     for (DWORD i = 0; i < XUSER_MAX_COUNT && pXInputGetState; i++)
         if (PadSlotConnected(i) && pXInputGetState(i, &st) == ERROR_SUCCESS) buttons |= st.Gamepad.wButtons;
+    return buttons;
+}
+
+// The keyboard keys count as the pad buttons they stand for, while the game window has the focus.
+// Their defaults, left Shift and left Ctrl, are bound in none of the game's input presets (0xCFABF8).
+static WORD KeyButtons()
+{
+    DWORD pid = 0;
+    GetWindowThreadProcessId(GetForegroundWindow(), &pid);
+    if (pid != GetCurrentProcessId()) return 0;
+    WORD buttons = 0;
+    if (g_cfg.boostKey && (GetAsyncKeyState(g_cfg.boostKey) & 0x8000)) buttons |= XINPUT_GAMEPAD_X;
+    if (g_cfg.powerFillKey && (GetAsyncKeyState(g_cfg.powerFillKey) & 0x8000))
+        buttons |= XINPUT_GAMEPAD_LEFT_THUMB | XINPUT_GAMEPAD_RIGHT_THUMB;
     return buttons;
 }
 
@@ -201,7 +216,7 @@ void BoostTick()
     lastTick = now;
     if (dt > 0.1f) dt = 0.1f;
 
-    WORD buttons = PadButtons();
+    WORD buttons = PadButtons() | KeyButtons();
     WORD pressed = buttons & ~lastButtons;
     lastButtons = buttons;
     bool boosting = false;

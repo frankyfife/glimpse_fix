@@ -41,8 +41,8 @@ struct Option {
     HWND label, ctrl, value;  // label (CHOICE, RANGE), control, value label (RANGE)
 };
 
-// keys for the camera options, as virtual key codes (P is the game's own pause key)
-#define KEY_CHOICES "0x31|1;0x32|2;0x33|3;0x34|4;0x35|5;0x36|6;0x37|7;0x38|8;0x39|9;0x30|0;0x41|A;0x42|B;0x43|C;0x44|D;0x45|E;0x46|F;0x47|G;0x48|H;0x49|I;0x4A|J;0x4B|K;0x4C|L;0x4D|M;0x4E|N;0x4F|O;0x51|Q;0x52|R;0x53|S;0x54|T;0x55|U;0x56|V;0x57|W;0x58|X;0x59|Y;0x5A|Z;0x70|F1;0x71|F2;0x72|F3;0x73|F4;0x74|F5;0x75|F6;0x76|F7;0x77|F8;0x78|F9;0x79|F10;0x7A|F11;0x7B|F12"
+// keys for the camera and gameplay options, as virtual key codes (P is the game's own pause key)
+#define KEY_CHOICES "0x31|1;0x32|2;0x33|3;0x34|4;0x35|5;0x36|6;0x37|7;0x38|8;0x39|9;0x30|0;0x41|A;0x42|B;0x43|C;0x44|D;0x45|E;0x46|F;0x47|G;0x48|H;0x49|I;0x4A|J;0x4B|K;0x4C|L;0x4D|M;0x4E|N;0x4F|O;0x51|Q;0x52|R;0x53|S;0x54|T;0x55|U;0x56|V;0x57|W;0x58|X;0x59|Y;0x5A|Z;0x70|F1;0x71|F2;0x72|F3;0x73|F4;0x74|F5;0x75|F6;0x76|F7;0x77|F8;0x78|F9;0x79|F10;0x7A|F11;0x7B|F12;0xA0|Left Shift;0xA2|Left Ctrl;0x20|Space;0x2D|Insert;0x2E|Delete;0x24|Home;0x21|Page Up;0x22|Page Down;0x60|Num 0;0x6E|Num ,;0x6B|Num +;0x6D|Num -"
 
 static Option kOptions[] = {
     // Controller
@@ -88,11 +88,13 @@ static Option kOptions[] = {
     { "Gameplay", "BonusContent", BOOL_OPT, "Bonus content", "The PC version's cheat code extras: Expressway track, Cobretti SlipStream, branded cars, Euro livery.", "0" },
     { "Gameplay", "UnlockDecals", CHOICE, "Achievements and decals", "Unlocked in the next single player race and saved with the profile (backed up to glimpse_backup first). Unobtainable = the six ranked online ones and the Pure decal.", "0", "0|As the game;2|Unobtainable only;1|All" },
     { "Gameplay", "SkipIntro", CHOICE, "Boot movies", "Skip the movies at every start. The files stay untouched.", "0", "0|Play both;1|Skip the logo;2|Skip logo and intro" },
-    { "Gameplay", "Boost", BOOL_OPT, "Boost (hold X)", "Your car surges forward while X is held, with more motion blur.", "0" },
+    { "Gameplay", "Boost", BOOL_OPT, "Boost (hold X)", "Your car surges forward while X or the boost key is held, with more motion blur.", "0" },
+    { "Gameplay", "BoostKey", CHOICE, "  Boost key", "Keyboard key held for the boost, like X on the pad. Left Shift is not used by the game.", "0xA0", "0|None;" KEY_CHOICES },
     { "Gameplay", "BoostAcceleration", RANGE, "  Boost acceleration", "m/s per second; 15 is about 1.5 g. Also used by the AI boost.", "15", 0, 1, 60, 1, 0 },
     { "Gameplay", "BoostMaxSpeed", RANGE, "  Boost top speed", "No boost above this speed, in m/s (90 m/s = 324 km/h). Also used by the AI boost.", "90", 0, 10, 200, 1, 0 },
     { "Gameplay", "BoostMotionBlur", RANGE, "  Boost motion blur", "Motion blur multiplier at full boost.", "3.0", 0, 1, 5, 0.1, 1 },
-    { "Gameplay", "PowerBarFill", BOOL_OPT, "Full power play bar (LS+RS)", "Press both sticks to fill your power play bar.", "0" },
+    { "Gameplay", "PowerBarFill", BOOL_OPT, "Full power play bar (LS+RS)", "Press both sticks or the power bar key to fill your power play bar.", "0" },
+    { "Gameplay", "PowerBarFillKey", CHOICE, "  Power bar key", "Keyboard key that fills the power play bar, like LS+RS on the pad. Left Ctrl is not used by the game.", "0xA2", "0|None;" KEY_CHOICES },
     { "Gameplay", "AIBoost", BOOL_OPT, "AI boost (experimental)", "The AI cars boost too, while they are behind you or not far ahead.", "0" },
     { "Gameplay", "AIBoostLevel", CHOICE, "  AI boost level", "Easy: now and then, up to 30 m ahead. Normal: about once a second, 60 m. Hard: almost constantly, 150 m.", "2", "1|Easy;2|Normal;3|Hard" },
     { "Gameplay", "AIBoostUnlimited", BOOL_OPT, "  Unlimited AI boost", "The AI's boost tank never empties.", "0" },
@@ -102,8 +104,11 @@ static Option kOptions[] = {
     { "Debug", "Log", BOOL_OPT, "Write SplitSecondPad.log", "A log next to the game, for bug reports.", "0" },
 };
 static const int kOptionCount = sizeof(kOptions) / sizeof(kOptions[0]);
-static const char* const kPages[] = { "Controller", "Graphics", "World", "Camera", "Gameplay", "Debug" };
-static const int kPageCount = 6;
+static const char* const kPages[] = { "Controller", "Graphics", "World", "Camera", "Gameplay", "AI", "Debug" };
+static const int kPageCount = 7;
+
+// the page an option is shown on: its INI section, except the AI boost options (in [Gameplay])
+static const char* PageOf(const Option& o) { return strncmp(o.key, "AIBoost", 7) ? o.section : "AI"; }
 
 // ---------------------------------------------------------------- INI file, edited in place
 
@@ -397,7 +402,7 @@ static void UpdateEnables()
     bool zoom = IsOn("ZoomKeys"), photo = IsOn("PhotoMode");
     struct { const char* key; bool on; } rules[] = {
         { "BloomStrength", bloom }, { "BloomTone", bloom }, { "BloomCurve", bloom },
-        { "BoostMotionBlur", boost },
+        { "BoostMotionBlur", boost }, { "BoostKey", boost }, { "PowerBarFillKey", IsOn("PowerBarFill") },
         { "ZoomInKey", zoom }, { "ZoomOutKey", zoom }, { "ZoomResetKey", zoom }, { "PhotoModeKey", photo },
         { "AIBoostLevel", ai && !chaos }, { "AIBoostUnlimited", ai && !chaos },
         { "AIBoostStraightOnly", ai && !chaos }, { "AIBoostChaos", ai },
@@ -475,7 +480,8 @@ static const char* const kPageText[] = {
     "Frame rate, image quality and effects. Bloom and exposure apply while the game runs.",
     "Streaming, draw distance and pop-in.",
     "Field of view, zoom and photo mode.",
-    "Unlocks, boost and the AI.",
+    "Unlocks, boost and the power play bar.",
+    "Boost for the AI cars (experimental).",
     "For bug reports.",
 };
 
@@ -485,7 +491,7 @@ static void ShowPage(int page)
     SetWindowTextA(s_title, kPages[page]);
     SetWindowTextA(s_subtitle, kPageText[page]);
     for (Option& o : kOptions) {
-        int cmd = !strcmp(o.section, kPages[page]) ? SW_SHOW : SW_HIDE;
+        int cmd = !strcmp(PageOf(o), kPages[page]) ? SW_SHOW : SW_HIDE;
         ShowWindow(o.label, cmd);
         ShowWindow(o.ctrl, cmd);
         if (o.value) ShowWindow(o.value, cmd);
@@ -557,7 +563,7 @@ static void CreateControls()
     for (int i = 0; i < kOptionCount; i++) {
         Option& o = kOptions[i];
         int page = 0;
-        while (strcmp(kPages[page], o.section)) page++;
+        while (strcmp(kPages[page], PageOf(o))) page++;
         int y = S(kRowTop) + row[page]++ * S(kRowH);
         int id = ID_OPTION0 + i;
         const char* text = o.text;

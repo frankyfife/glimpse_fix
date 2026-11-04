@@ -31,15 +31,17 @@ Split/Second never had a boost. Now it does — and it feels like it belongs the
 
 | | What it does | INI |
 |---|---|---|
-| **Boost** | Hold **X** and your car surges forward along its heading, up to 324 km/h. The motion blur swells with it (3× by default) and eases off when you let go, so speed *feels* like speed. Works only while driving forward, never in the pause menu. | `Boost=1` |
+| **Boost** | Hold **X** (keyboard: **left Shift**) and your car surges forward along its heading, up to 324 km/h. The motion blur swells with it (3× by default) and eases off when you let go, so speed *feels* like speed. Works only while driving forward, never in the pause menu. | `Boost=1` |
 | **AI boost** *(experimental)* | The AI cars boost too, in bursts while they are behind you or not far ahead, so the field stays tight. Three levels from *easy* to *hard*, on the straights only or everywhere, and a **chaos mode** (`AIBoostChaos=1`) where every AI car boosts all the time, always has a full power play bar and drives at its highest skill. Turn it off with one line if it misbehaves. | `AIBoost=1` |
-| **Full Power Play bar** | Press **LS + RS** (both sticks) and the power play bar is full: drop a building on the leader whenever you like. | `PowerBarFill=1` |
+| **Full Power Play bar** | Press **LS + RS** (both sticks; keyboard: **left Ctrl**) and the power play bar is full: drop a building on the leader whenever you like. | `PowerBarFill=1` |
 | **Everything unlocked** | All tracks, events, episodes, game modes and cars selectable from the start, using the game's own switches. Your profile is not changed; set it back to 0 and everything is as you earned it. | `UnlockAll=1` |
 | **Bonus content** | The extras the PC version hid behind cheat codes: the **Expressway** track, the Cobretti SlipStream, the retailer branded cars and the Euro livery pack. | `BonusContent=1` |
 | **Achievements and decals** | Unlocks the achievements and with them the car decals: all of them, or only the ones nobody can earn any more (the six from ranked online races and the Pure decal). Done by the game's own unlock in the next single player race and saved with the profile, which is backed up to `glimpse_backup` first. | `UnlockDecals=1` / `2` |
 | **Skip the intro** | Skip the publisher logo, or the logo and the intro, at every start. The movie files stay untouched. | `SkipIntro=1` / `2` |
 
-All of them can be switched in `glimpse_config.exe` (*Gameplay*), the photo mode under *Camera*. Tune the boost with
+All of them can be switched in `glimpse_config.exe` (*Gameplay*), the AI boost under *AI*, the photo
+mode under *Camera*. Both keys can be changed (`BoostKey`, `PowerBarFillKey`); the defaults are bound
+in none of the game's own keyboard layouts. Tune the boost with
 `BoostAcceleration` (m/s², default 15 ≈ 1.5 g), `BoostMaxSpeed` (m/s, default 90) and
 `BoostMotionBlur` (1–5), the AI boost with `AIBoostLevel`, `AIBoostUnlimited`, `AIBoostStraightOnly`
 or simply `AIBoostChaos`. Like everything else here, the extras only change game data, never game
@@ -255,7 +257,7 @@ problems without it before reporting them.
 ## Settings
 
 `glimpse_config.exe` edits `SplitSecondPad.ini` next to it (or one picked with *Open INI...*): one
-tab per section, checkboxes, sliders and lists, a tooltip with the details on every option, and
+tab per section (the AI boost on a page of its own), checkboxes, sliders and lists, a tooltip with the details on every option, and
 three presets (*Recommended*, *Original game*, *Chaos*). Options that depend on another one are
 greyed out while it is off. Every change is saved at once; bloom and exposure apply while the game
 runs, everything else at the next start. Only values are changed, so comments, order and keys the
@@ -323,10 +325,12 @@ The file is split into sections. INIs from older versions with everything under 
 | `BonusContent` | 0 | 1 = the PC version's cheat code extras: Expressway track, Cobretti SlipStream, retailer branded cars, Euro livery pack. |
 | `UnlockDecals` | 0 | Achievements and their decals: 1 = all, 2 = only the unobtainable ones (achievements 41–46 from ranked online races and the Pure decal; the "all achievements" decal follows once the rest is earned). Unlocked in the next single player race and saved with the profile, so they stay when set back to 0; the Pure decal shows while this is set. The `.sav` files are copied to `glimpse_backup` before the first unlock. |
 | `Boost` | 0 | 1 = X held gives player 1 extra speed along the car's heading. |
+| `BoostKey` | 0xA0 | Keyboard key that works like X for the boost, a virtual key code (0xA0 = left Shift). 0 = pad only. |
 | `BoostAcceleration` | 15 | Boost in m/s² (1–100). |
 | `BoostMaxSpeed` | 90 | No boost above this speed, m/s (10–200; 90 = 324 km/h). |
 | `BoostMotionBlur` | 3.0 | Motion blur multiplier at full boost (1–5). |
 | `PowerBarFill` | 0 | 1 = LS+RS (both sticks pressed) fills player 1's power play bar. |
+| `PowerBarFillKey` | 0xA2 | Keyboard key that works like LS+RS (0xA2 = left Ctrl). 0 = pad only. |
 | `AIBoost` | 0 | Experimental: 1 = AI cars boost in bursts while behind player 1 or not far ahead. |
 | `AIBoostLevel` | 2 | 1 easy (0.8× your boost, 3 s tank, up to 30 m ahead), 2 normal (1×, 5 s, about once a second, 60 m), 3 hard (1.3×, 8 s, almost constantly, 150 m). |
 | `AIBoostUnlimited` | 0 | 1 = the AI's boost tank never empties. |
