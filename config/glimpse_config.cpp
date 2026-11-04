@@ -41,6 +41,9 @@ struct Option {
     HWND label, ctrl, value;  // label (CHOICE, RANGE), control, value label (RANGE)
 };
 
+// keys for the camera options, as virtual key codes (P is the game's own pause key)
+#define KEY_CHOICES "0x31|1;0x32|2;0x33|3;0x34|4;0x35|5;0x36|6;0x37|7;0x38|8;0x39|9;0x30|0;0x41|A;0x42|B;0x43|C;0x44|D;0x45|E;0x46|F;0x47|G;0x48|H;0x49|I;0x4A|J;0x4B|K;0x4C|L;0x4D|M;0x4E|N;0x4F|O;0x51|Q;0x52|R;0x53|S;0x54|T;0x55|U;0x56|V;0x57|W;0x58|X;0x59|Y;0x5A|Z;0x70|F1;0x71|F2;0x72|F3;0x73|F4;0x74|F5;0x75|F6;0x76|F7;0x77|F8;0x78|F9;0x79|F10;0x7A|F11;0x7B|F12"
+
 static Option kOptions[] = {
     // Controller
     { "Controller", "VirtualPads", RANGE, "Virtual pads", "XInput slots presented to the game as Xbox 360 pads. The game takes at most 4 joysticks; lower this to make room for a wheel.", "4", 0, 0, 4, 1, 0 },
@@ -56,6 +59,7 @@ static Option kOptions[] = {
     { "Graphics", "Anisotropy", CHOICE, "Anisotropic filtering", "Sharper textures at an angle. Off = the game's plain linear filtering.", "16", "0|Off;2|2x;4|4x;8|8x;16|16x" },
     { "Graphics", "MotionBlurStrength", RANGE, "Motion blur", "Multiplier on the cameras' motion blur (graphics quality High or Very High). 0 = off.", "1.0", 0, 0, 3, 0.1, 1 },
     { "Graphics", "Vignette", BOOL_OPT, "Vignette", "Darkened screen edges of the race cameras.", "0" },
+    { "Graphics", "Gradient", BOOL_OPT, "Screen gradient", "The translucent blue band the cameras lay over the top of the screen.", "1" },
     { "Graphics", "Bloom", BOOL_OPT, "Bloom", "Glow around bright areas. Off keeps the tone mapping.", "1" },
     { "Graphics", "BloomStrength", RANGE, "  Bloom strength", "Glow on bright areas, on top of each camera's value. Applies while the game runs.", "1.0", 0, 0, 5, 0.05, 2 },
     { "Graphics", "BloomTone", RANGE, "  Bloom tone", "Second bright pass value, a softer effect. Applies while the game runs.", "1.0", 0, 0, 5, 0.05, 2 },
@@ -69,8 +73,20 @@ static Option kOptions[] = {
     { "World", "LodDistanceScale", RANGE, "Draw distance", "Multiplier for LOD, streaming, particle, debris and power play distances.", "2.0", 0, 0.5, 8, 0.1, 1 },
     { "World", "PopInFix", BOOL_OPT, "Pop-in fix", "Buildings beside the track no longer pop in at section borders (a little more to draw).", "1" },
     // Gameplay
+    // Camera
+    { "Camera", "FOV", RANGE, "Field of view", "Race cameras (chase and bumper) as a factor of the game's own; the game still widens the view with speed.", "1.0", 0, 0.5, 2, 0.05, 2 },
+    { "Camera", "UltrawideFix", BOOL_OPT, "Ultrawide fix", "On screens wider than 16:9 the picture keeps the height of 16:9 instead of losing the top and bottom.", "1" },
+    { "Camera", "ZoomKeys", BOOL_OPT, "Zoom keys", "Zoom the race camera while a key is held.", "0" },
+    { "Camera", "ZoomInKey", CHOICE, "  Zoom in", "Key held to zoom closer.", "0x31", KEY_CHOICES },
+    { "Camera", "ZoomOutKey", CHOICE, "  Zoom out", "Key held to zoom wider.", "0x32", KEY_CHOICES },
+    { "Camera", "ZoomResetKey", CHOICE, "  Zoom reset", "Back to the field of view above.", "0x33", KEY_CHOICES },
+    { "Camera", "PhotoMode", BOOL_OPT, "Photo mode", "During a race the key or the pad's Back button holds the world still, hides the HUD and frees the camera. Sticks or W A S D and I J K L to move and look, triggers or Q E down and up, Y + LB RB or U O to tilt.", "0" },
+    { "Camera", "PhotoModeKey", CHOICE, "  Photo mode key", "Keys the game uses itself (Esc, P, Enter, arrows) do not work here.", "0x46", KEY_CHOICES },
+    { "Camera", "HudKey", CHOICE, "HUD on/off key", "Switch the HUD off and on during a race.", "0", "0|None;" KEY_CHOICES },
+    // Gameplay
     { "Gameplay", "UnlockAll", BOOL_OPT, "Everything unlocked", "All tracks, events, episodes, game modes and cars selectable. Your profile is not changed.", "0" },
     { "Gameplay", "BonusContent", BOOL_OPT, "Bonus content", "The PC version's cheat code extras: Expressway track, Cobretti SlipStream, branded cars, Euro livery.", "0" },
+    { "Gameplay", "UnlockDecals", CHOICE, "Achievements and decals", "Unlocked in the next single player race and saved with the profile (backed up to glimpse_backup first). Unobtainable = the six ranked online ones and the Pure decal.", "0", "0|As the game;2|Unobtainable only;1|All" },
     { "Gameplay", "SkipIntro", CHOICE, "Boot movies", "Skip the movies at every start. The files stay untouched.", "0", "0|Play both;1|Skip the logo;2|Skip logo and intro" },
     { "Gameplay", "Boost", BOOL_OPT, "Boost (hold X)", "Your car surges forward while X is held, with more motion blur.", "0" },
     { "Gameplay", "BoostAcceleration", RANGE, "  Boost acceleration", "m/s per second; 15 is about 1.5 g. Also used by the AI boost.", "15", 0, 1, 60, 1, 0 },
@@ -86,8 +102,8 @@ static Option kOptions[] = {
     { "Debug", "Log", BOOL_OPT, "Write SplitSecondPad.log", "A log next to the game, for bug reports.", "0" },
 };
 static const int kOptionCount = sizeof(kOptions) / sizeof(kOptions[0]);
-static const char* const kPages[] = { "Controller", "Graphics", "World", "Gameplay", "Debug" };
-static const int kPageCount = 5;
+static const char* const kPages[] = { "Controller", "Graphics", "World", "Camera", "Gameplay", "Debug" };
+static const int kPageCount = 6;
 
 // ---------------------------------------------------------------- INI file, edited in place
 
@@ -364,7 +380,7 @@ static void ShowValue(Option& o, double v)
     if (!strcmp(o.key, "BoostMaxSpeed")) text += " m/s  " + std::to_string((int)(v * 3.6 + 0.5)) + " km/h";
     else if (!strcmp(o.key, "BoostAcceleration")) text += " m/s per s";
     else if (strstr(o.key, "Strength") || strstr(o.key, "Blur") || strstr(o.key, "Bloom") || strstr(o.key, "Scale") ||
-             !strcmp(o.key, "Exposure"))
+             !strcmp(o.key, "Exposure") || !strcmp(o.key, "FOV"))
         text += "x";
     SetWindowTextA(o.value, text.c_str());
 }
@@ -378,9 +394,11 @@ static bool IsOn(const char* key)
 static void UpdateEnables()
 {
     bool bloom = IsOn("Bloom"), boost = IsOn("Boost"), ai = IsOn("AIBoost"), chaos = IsOn("AIBoostChaos");
+    bool zoom = IsOn("ZoomKeys"), photo = IsOn("PhotoMode");
     struct { const char* key; bool on; } rules[] = {
         { "BloomStrength", bloom }, { "BloomTone", bloom }, { "BloomCurve", bloom },
         { "BoostMotionBlur", boost },
+        { "ZoomInKey", zoom }, { "ZoomOutKey", zoom }, { "ZoomResetKey", zoom }, { "PhotoModeKey", photo },
         { "AIBoostLevel", ai && !chaos }, { "AIBoostUnlimited", ai && !chaos },
         { "AIBoostStraightOnly", ai && !chaos }, { "AIBoostChaos", ai },
     };
@@ -456,6 +474,7 @@ static const char* const kPageText[] = {
     "Pads, triggers and button prompts.",
     "Frame rate, image quality and effects. Bloom and exposure apply while the game runs.",
     "Streaming, draw distance and pop-in.",
+    "Field of view, zoom and photo mode.",
     "Unlocks, boost and the AI.",
     "For bug reports.",
 };
@@ -481,7 +500,7 @@ struct Preset {
 };
 static const Preset kPresets[] = {
     { "Recommended", "" },  // every option at its default
-    { "Original game", "FrameRate=30;RenderScale=auto;Anisotropy=0;MotionBlurStrength=1.0;Vignette=1;Bloom=1;BloomStrength=1.0;BloomTone=1.0;BloomCurve=1.0;Exposure=1.0;LensFlare=1;ParticleFlare=1;FixPowerplayIconSize=0;StreamPoolMB=0;LodDistanceScale=1.0;PopInFix=0;SeparateTriggers=0" },
+    { "Original game", "FrameRate=30;RenderScale=auto;Anisotropy=0;MotionBlurStrength=1.0;Vignette=1;Bloom=1;BloomStrength=1.0;BloomTone=1.0;BloomCurve=1.0;Exposure=1.0;LensFlare=1;ParticleFlare=1;FixPowerplayIconSize=0;StreamPoolMB=0;LodDistanceScale=1.0;PopInFix=0;SeparateTriggers=0;UltrawideFix=0" },
     { "Chaos", "UnlockAll=1;Boost=1;PowerBarFill=1;AIBoost=1;AIBoostChaos=1" },
 };
 
@@ -516,7 +535,7 @@ static HWND Child(const char* cls, const char* text, DWORD style, int x, int y, 
 enum { ID_NAV0 = 10, ID_PRESET0 = 20, ID_OPEN = 30, ID_CLOSE = 31, ID_RESTORE = 32, ID_OPTION0 = 100 };
 
 // layout, in 96 dpi pixels
-static const int kWidth = 880, kHeight = 660, kSideW = 210, kContentX = 240, kLabelW = 300, kRowH = 33, kRowTop = 100;
+static const int kWidth = 880, kHeight = 700, kSideW = 210, kContentX = 240, kLabelW = 300, kRowH = 33, kRowTop = 100;
 
 static void CreateControls()
 {
@@ -876,7 +895,8 @@ static LRESULT CALLBACK WndProc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
                 auto items = Choices(o);
                 HMENU menu = CreatePopupMenu();
                 for (int i = 0; i < (int)items.size(); i++)
-                    AppendMenuA(menu, MF_STRING | (i == s_choice[id - ID_OPTION0] ? MF_CHECKED : 0), i + 1,
+                    AppendMenuA(menu, MF_STRING | (i == s_choice[id - ID_OPTION0] ? MF_CHECKED : 0) |
+                                          (i && i % 12 == 0 ? MF_MENUBARBREAK : 0), i + 1,
                                 items[i].second.c_str());
                 RECT r;
                 GetWindowRect(o.ctrl, &r);

@@ -34,6 +34,7 @@ struct Config {
     bool  popInFix;          // ignore the sectors' precomputed visibility lists (distance and frustum only)
     bool  unlockAll;         // all tracks, events, episodes, game modes and vehicles selectable
     bool  bonusContent;      // the PC cheat code extras: Expressway track, branded cars, liveries
+    int   unlockDecals;      // achievement decals: 0 off, 1 all, 2 only the online ones and the Pure decal (saved)
     bool  boost;             // X held: extra acceleration for player 1
     float boostAcceleration; // m/s^2
     float boostMaxSpeed;     // m/s, boost only below this speed
@@ -44,6 +45,14 @@ struct Config {
     bool  aiBoostUnlimited;  // the tank never empties
     bool  aiBoostStraightOnly; // only on straights at speed
     bool  aiBoostChaos;      // hard, unlimited, anywhere, also when far ahead (overrides the three above)
+    float fov;               // field of view factor of the race cameras
+    bool  ultrawideFix;      // wider screens than 16:9 keep the vertical field of view of 16:9
+    bool  zoomKeys;          // zoom in/out while a key is held, and reset
+    int   zoomInKey, zoomOutKey, zoomResetKey;  // virtual key codes
+    bool  photoMode;         // free camera during a race, world held still and HUD hidden
+    int   photoModeKey;      // virtual key code (the pad's Back button works as well)
+    int   hudKey;            // virtual key code that switches the HUD off and on, 0 = none
+    bool  gradient;          // keep the cameras' screen gradient (the blue band at the top)
     unsigned patchMask;      // PATCH_* bits that may be applied (development, to bisect side effects)
 };
 
@@ -52,7 +61,7 @@ enum PatchBits {
     PATCH_FRAMERATE = 0x10, PATCH_STREAMPOOL = 0x20, PATCH_ICONSIZE = 0x40, PATCH_MOTIONBLUR = 0x80,
     PATCH_RENDERSCALE = 0x100, PATCH_PADNAMES = 0x200, PATCH_LOD = 0x400, PATCH_D3D = 0x800,
     PATCH_AUDIODIAG = 0x1000, PATCH_VIGNETTE = 0x2000,
-    PATCH_UNLOCK = 0x4000, PATCH_SAVEDIAG = 0x8000, PATCH_ROUTEMARKER = 0x10000, PATCH_BOOST = 0x20000, PATCH_AIBOOST = 0x40000, PATCH_FLARES = 0x80000, PATCH_INTRO = 0x100000,
+    PATCH_UNLOCK = 0x4000, PATCH_SAVEDIAG = 0x8000, PATCH_ROUTEMARKER = 0x10000, PATCH_BOOST = 0x20000, PATCH_AIBOOST = 0x40000, PATCH_FLARES = 0x80000, PATCH_INTRO = 0x100000, PATCH_CAMERA = 0x200000,
     PATCH_ALL = 0xFFFFFFFF
 };
 
@@ -89,6 +98,7 @@ void InstallD3DHooks();  // device log/capture (Log=1), anisotropic filtering
 // audio_diag.cpp
 void InstallAudioDiagnostics();
 void AudioDiagTick();
+void PauseGameSound(bool pause);  // photo mode: all sound categories the game has used
 
 // framerate.cpp
 void PatchFrameRate();
@@ -108,6 +118,12 @@ void ApplyLensFlare();  // per frame
 void BoostTick();        // per input frame: boost on X, power bar fill on LS+RS
 float BoostBlurScale();  // motion blur multiplier while boosting (1 = none)
 
+// camera.cpp
+void PatchCamera();
+void CameraTick();       // per input frame: zoom keys, HUD key, photo mode
+bool SinglePlayerRace(); // a race camera runs on a single screen (not paused)
+bool CameraBlocksPad();  // photo mode drives the camera with the pad: the game sees it idle
+
 // savediag.cpp
 void WatchSaveFiles();  // Log=1: log every change of the profile files
 
@@ -117,6 +133,20 @@ void PatchRenderScale();
 // game.cpp
 bool BytesMatch(const void* at, const char* hex);     // hex string, no spaces
 void WriteMemory(void* at, const void* src, size_t len);
+
+// Scaleform GFxValue as laid out by this game's GFx build; GFx movie view vtable: +0x2C SetVariable, +0x48 Invoke
+struct GFxValue {
+    DWORD type;
+    DWORD pad;
+    union {
+        const char* str;
+        double num;
+    };
+};
+enum { GFX_NUMBER = 3, GFX_STRING = 4, GFX_RESULT_STRING = 0x14 };
+
+typedef bool(__thiscall* GFxInvoke_t)(void* movie, const char* path, GFxValue* result, const GFxValue* args, unsigned count);
+typedef bool(__thiscall* GFxSetVariable_t)(void* movie, const char* path, const GFxValue* value, int setType);
 void* Detour(BYTE* at, int len, void* hook);         // returns the trampoline
 void ApplyGamePatches();
 void PatchPadNames();

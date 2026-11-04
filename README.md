@@ -13,7 +13,10 @@ adds what the port never had:
 * **No pop-in of buildings beside the track**, longer LOD, streaming, particle and powerplay
   distances
 * Powerplay icons at console size on high resolutions, motion blur matched to 60 fps, optional
-  vignette, anisotropic filtering, internal render resolution independent of the quality option
+  vignette and screen gradient, anisotropic filtering, internal render resolution independent of
+  the quality option
+* **Camera:** field of view, the correct view on ultrawide screens, zoom keys, a **photo mode**
+  with a free camera and a key to switch the HUD off
 * **Extras nobody else has** (off by default) — see below
 * **A settings program** (`glimpse_config.exe`) instead of editing the INI by hand
 
@@ -33,9 +36,10 @@ Split/Second never had a boost. Now it does — and it feels like it belongs the
 | **Full Power Play bar** | Press **LS + RS** (both sticks) and the power play bar is full: drop a building on the leader whenever you like. | `PowerBarFill=1` |
 | **Everything unlocked** | All tracks, events, episodes, game modes and cars selectable from the start, using the game's own switches. Your profile is not changed; set it back to 0 and everything is as you earned it. | `UnlockAll=1` |
 | **Bonus content** | The extras the PC version hid behind cheat codes: the **Expressway** track, the Cobretti SlipStream, the retailer branded cars and the Euro livery pack. | `BonusContent=1` |
+| **Achievements and decals** | Unlocks the achievements and with them the car decals: all of them, or only the ones nobody can earn any more (the six from ranked online races and the Pure decal). Done by the game's own unlock in the next single player race and saved with the profile, which is backed up to `glimpse_backup` first. | `UnlockDecals=1` / `2` |
 | **Skip the intro** | Skip the publisher logo, or the logo and the intro, at every start. The movie files stay untouched. | `SkipIntro=1` / `2` |
 
-All of them can be switched in `glimpse_config.exe` (*Gameplay*). Tune the boost with
+All of them can be switched in `glimpse_config.exe` (*Gameplay*), the photo mode under *Camera*. Tune the boost with
 `BoostAcceleration` (m/s², default 15 ≈ 1.5 g), `BoostMaxSpeed` (m/s, default 90) and
 `BoostMotionBlur` (1–5), the AI boost with `AIBoostLevel`, `AIBoostUnlimited`, `AIBoostStraightOnly`
 or simply `AIBoostChaos`. Like everything else here, the extras only change game data, never game
@@ -46,7 +50,8 @@ code, so they are safe with the copy protection.
 > (Split/Second: Velocity), other regions and any other release have **not** been tested. All
 > addresses come from the Steam executable; on a different exe the byte checks fail and the
 > game-specific patches (60 fps, streaming pool, prompt icons, trigger preset) switch themselves
-> off, and whether the rest works there is unknown.
+> off, and whether the rest works there is unknown. Packs that replace the exe are not supported,
+> see [The Xbox content modpack](#the-xbox-content-modpack-xenondll).
 
 ## Install
 
@@ -141,8 +146,9 @@ draw at once.
   only that code reads; it is set to 2.25 / width.
 * **Motion blur:** it blurs along one frame of camera motion, which at 60 fps is half as much;
   the amount is doubled. `MotionBlurStrength` scales it further.
-* **Vignette:** the race cameras darken the screen edges in the grading pass; `Vignette=0` sets
-  the vignette's U/V scale to 0 for that pass, grading and gradient stay.
+* **Vignette and gradient:** the race cameras darken the screen edges and lay a translucent blue
+  band over the top of the screen in the grading pass. `Vignette=0` sets the vignette's U/V scale
+  to 0 for that pass, `Gradient=0` the gradient's alpha; the grading itself stays.
 * **Bloom and flares:** bloom, the sun/light and screen space lens flares and the particle flares
   can each be switched off (`Bloom`, `LensFlare`, `ParticleFlare`), and the bloom look and exposure
   tuned live (`BloomStrength`, `BloomTone`, `BloomCurve`, `Exposure`). Bloom is cleared from the
@@ -152,6 +158,21 @@ draw at once.
   not render targets get anisotropic filtering.
 * **RenderScale:** "Very High" is exactly "High" plus 2x supersampling. The factor can be set
   independently of the quality option.
+
+### Camera
+
+* **Field of view:** `FOV` scales the race cameras' (chase and bumper) field of view; the game's
+  widening with speed stays on top of it.
+* **Ultrawide:** the game keeps the horizontal field of view, so screens wider than 16:9 lose
+  picture at the top and bottom. `UltrawideFix` widens the view until the vertical one matches
+  16:9 again (single screen only).
+* **Zoom keys:** hold a key to zoom the race camera closer or wider, another one resets it.
+* **Photo mode:** during a race, a key or the pad's Back button holds the world still (the game's
+  own slow motion at 0.0001), hides the HUD and all on-screen messages and frees the camera: left
+  stick or W A S D to move, right stick or I J K L to look, the triggers or Q E down and up, A or
+  Shift faster, LB RB or the zoom keys to zoom, Y + LB RB or U O to tilt. Back, B or the key again
+  returns to the race. The game's sound is paused meanwhile (FMOD's own category pause).
+* **HUD key:** switches the power bar and the info bar off and on during a race.
 
 ## Copy protection
 
@@ -170,14 +191,17 @@ loop, and that part is checked about 6½ minutes after launch.
 How the fix avoids it: **no game code is changed at all.** Everything works through
 
 * values in the game's data: tweakables and their records (frame pacing, streaming pool, LOD and
-  streaming distances, debug, unlock and lens flare switches, AI skill limits), loaded HUD
+  streaming distances, debug, unlock and lens flare switches, the achievements' debug unlock, the
+  slow motion and HUD render switches of the photo mode, AI skill limits), loaded HUD
   parameters, powerplay distance records, the main loop's accumulator, the power bar, the AI skill
   and the cars' chassis velocity,
-* swapped vtable slots (motion blur, grading, bloom and particle flare passes, AI player update),
-  import table entries (`XInputSetState`, Bink's `BinkOpen`/`BinkWait`/`BinkDoFrame`), read-only
+* swapped vtable slots (motion blur, grading, bloom and particle flare passes, AI player update,
+  chase and bumper camera update),
+  import table entries (`XInputSetState`, Bink's `BinkOpen`/`BinkWait`/`BinkDoFrame`, FMOD's
+  `Event::start`), read-only
   strings and constants (prompt bar icon paths, route marker size),
 * the Direct3D device's vtable, and calls into the game's own functions (dictionary lookup,
-  Scaleform `Invoke`/`SetVariable`) from the input poll.
+  Scaleform `Invoke`/`SetVariable` for the prompt bar and the photo mode's HUD) from the input poll.
 
 The prompt bar glyphs, the title screen text, the icon size, the 60 fps and the streaming pool were
 first done with code patches and each set off exactly this hang, so they were rebuilt this way.
@@ -187,6 +211,30 @@ The one exception is `RenderScale` set to a number (see Known limitations).
   which one causes a side effect. With `Log=1` the log also shows the number of SecuROM VM
   contexts in use whenever it changes; a check that found something shows up as two more
   contexts (`8B03 8AF3`) every ~22 s.
+
+## The Xbox content modpack (Xenon.dll)
+
+There is a pack that brings the Xbox 360 DLC to the PC (the "elysium" package with `Xenon.dll`).
+glimpse_fix does not support it and will not build on it:
+
+1. **It is not the Steam game any more.** The pack overwrites `SplitSecond.exe` with a different,
+   older build (not the Steam release) that is patched to load `Xenon.dll`, which then patches the
+   game in memory. glimpse_fix is written for the unmodified Steam exe and checks the expected
+   bytes before every patch; on the replaced exe those checks fail and most of the fix switches
+   itself off (60 fps, streaming pool, pop-in fix, button prompts, icon size, ...). Porting it to
+   that exe would mean supporting a build Steam owners never bought.
+2. **Copy protection.** glimpse_fix never changes game code, leaves SecuROM fully intact and needs
+   neither a modified nor a cracked exe. A pack that replaces the exe and patches code in memory
+   works the opposite way, and the two are not mixed.
+3. **Content.** The new tracks and modes (Quarry, Minepit Park, Deadline, Onslaught, Survival) and
+   the car packs are the paid Xbox 360 DLC, which was never released for PC. The pack
+   redistributes them without a license. That is tolerated, not allowed, and it has no place here.
+
+What glimpse_fix does instead: everything the Steam version already ships but keeps locked can be
+unlocked through the game's own switches, without code changes: all tracks, modes and cars
+(`UnlockAll`), the PC cheat code extras including the Expressway track (`BonusContent`) and all
+achievements and decals (`UnlockDecals`). Using the pack is your choice, but please reproduce
+problems without it before reporting them.
 
 ## Settings
 
@@ -223,6 +271,7 @@ The file is split into sections. INIs from older versions with everything under 
 | `Anisotropy` | 16 | Anisotropic filtering 2–16, 0 = stock (linear). |
 | `MotionBlurStrength` | 1.0 | Motion blur multiplier on top of the 60 fps compensation. 0 = off. |
 | `Vignette` | 0 | 1 = keep the cameras' darkened screen edges. |
+| `Gradient` | 1 | 0 = no translucent blue band at the top of the screen. |
 | `Bloom` | 1 | 0 = no bloom (glow around bright areas); the frame is still tone mapped. |
 | `BloomStrength`, `BloomTone`, `BloomCurve`, `Exposure` | 1.0 | Multipliers on the cameras' bloom values (0–10): glow on bright areas, a softer second bright pass value, the add curve, the brightness of the whole picture. Read again every 2 s, so they can be tuned while the game runs. |
 | `LensFlare` | 1 | 0 = no sun, light or screen space lens flares. |
@@ -237,6 +286,18 @@ The file is split into sections. INIs from older versions with everything under 
 | `LodDistanceScale` | 2.0 | Multiplier for LOD, streaming, particle, debris and powerplay distances (0.5–8). |
 | `PopInFix` | 1 | Ignore the sectors' precomputed visibility lists. 0 = stock. |
 
+**[Camera]**
+
+| Key | Default | Meaning |
+|---|---|---|
+| `FOV` | 1.0 | Field of view of the race cameras as a factor of the game's own (0.3–2.5). |
+| `UltrawideFix` | 1 | Screens wider than 16:9 keep the picture height of 16:9. 0 = stock. |
+| `ZoomKeys` | 0 | 1 = zoom the race camera while `ZoomInKey` / `ZoomOutKey` is held, `ZoomResetKey` back to `FOV`. |
+| `ZoomInKey`, `ZoomOutKey`, `ZoomResetKey` | 0x31, 0x32, 0x33 | Virtual key codes (1, 2, 3 on the top row). |
+| `PhotoMode` | 0 | 1 = photo mode with `PhotoModeKey` or the pad's Back button during a race. |
+| `PhotoModeKey` | 0x46 | Virtual key code (F). Keys the game uses itself (Esc, P, Enter, arrows) do not work. |
+| `HudKey` | 0 | Virtual key code that switches the HUD off and on during a race (0x48 = H). 0 = no key. |
+
 **[Gameplay]**
 
 | Key | Default | Meaning |
@@ -244,6 +305,7 @@ The file is split into sections. INIs from older versions with everything under 
 | `UnlockAll` | 0 | 1 = all tracks, events, episodes, game modes and vehicles selectable (the game's own switches; the profile is not changed). |
 | `SkipIntro` | 0 | Boot movies at every start: 1 = skip the publisher logo, 2 = also the game intro. They end at once without decoding (the movie files stay untouched). 0 = stock. |
 | `BonusContent` | 0 | 1 = the PC version's cheat code extras: Expressway track, Cobretti SlipStream, retailer branded cars, Euro livery pack. |
+| `UnlockDecals` | 0 | Achievements and their decals: 1 = all, 2 = only the unobtainable ones (achievements 41–46 from ranked online races and the Pure decal; the "all achievements" decal follows once the rest is earned). Unlocked in the next single player race and saved with the profile, so they stay when set back to 0; the Pure decal shows while this is set. The `.sav` files are copied to `glimpse_backup` before the first unlock. |
 | `Boost` | 0 | 1 = X held gives player 1 extra speed along the car's heading. |
 | `BoostAcceleration` | 15 | Boost in m/s² (1–100). |
 | `BoostMaxSpeed` | 90 | No boost above this speed, m/s (10–200; 90 = 324 km/h). |
@@ -272,7 +334,11 @@ The file is split into sections. INIs from older versions with everything under 
 * `RenderScale` other than `auto` patches code in the render target and HUD setup (nine places),
   the only option that changes game code. Leave it at `auto` if the game hangs after a few
   minutes with it set.
-* Boost and the power bar fill work for player 1 only.
+* Boost, the power bar fill, the photo mode and the HUD key work for player 1 only.
+* `UnlockDecals` works in single player races only (the game's own unlock runs there), and the
+  profile is saved when the race ends: finish it or leave it through the pause menu. The Pure
+  decal is reset by the game whenever it looks for Pure saves, so it is shown only while the
+  option is set.
 * `PopInFix=1` draws somewhat more per frame than the stock visibility lists allow.
 * Audio: the game forces FMOD to DirectSound in 5.1. The LFE channel stays silent and the pause
   menu is completely silent; both are the game's own mix.
@@ -333,6 +399,14 @@ part of this repository.
 | `0x00B9B39C`, `0x00B9B3B0`, `0x00B9B380` | Import table: `BinkOpen`, `BinkWait`, `BinkDoFrame` (boot movies: `data/movies/bootup`) |
 | `0x01E0266A` | SecuROM VM context table (10 entries, +0x24 = `0x66666666` while in use) |
 | `0x00A15BF0` | Dictionary lookup, key → UTF-8 text |
+| `0x00C5AE64`, `0x00C5B1F0` | vtable slots of the chase `0xA89240` and bumper `0xA8D9A0` camera update (camera state: +0x14 axes, FOV) |
+| `0x00D71208`, `0x00D113B8` | "Physics/Change Phys dt/Slow motion activated", "Slow Motion cheat speed" |
+| `0x00D1BC94`, `0x00D1BC9C` | "UI/HUD/3D Components/Render Powerbar", "Render Infobar" |
+| `0x00D64E0C` | UI layers: `[+8][id]`; player 1's `Hud.gfx` is layer `0x3B` (vtable `0xBD0E1C`, `[+0x68]+4` GFx movie view) |
+| `0x00D64E00` | +0x208 `cAnchoviesPC` achievements (vtable `0xC4AAC4`, unlock `0xA17F90`; +0x2C unlocked, +0x38 count 47); ids 41–46 come from ranked online results (`0x802870`) |
+| `0x00D71954`, `0x00D11B6C` | "Anchovies/UnlockAnchovy", "UnlockAnchovieID", read by the race update `0x4BF180` |
+| `0x00D64E6C` | HasPureSave (decal id 47); decal table `0x00D6FABC` (id, title), 48 entries |
+| `0x00B9B43C` | Import table: FMOD `Event::start` |
 | `0x008674F0` | FMOD init: DirectSound, `setSpeakerMode(5POINT1)` |
 
 Actions: `0x29` throttle, `0x2A` brake, `0x1D`–`0x2C` the 16 console buttons, `0x03`–`0x06` menu

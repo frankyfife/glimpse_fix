@@ -124,6 +124,7 @@ static void LoadConfig()
     if (g_cfg.anisotropy > 16) g_cfg.anisotropy = 16;
     g_cfg.motionBlurStrength = IniFloat("Graphics", "MotionBlurStrength", 1.0f, 0.0f, 10.0f);
     g_cfg.vignette = IniBool("Graphics", "Vignette", false);
+    g_cfg.gradient = IniBool("Graphics", "Gradient", true);
     g_cfg.bloom = IniBool("Graphics", "Bloom", true);
     g_cfg.lensFlare = IniBool("Graphics", "LensFlare", true);
     g_cfg.particleFlare = IniBool("Graphics", "ParticleFlare", true);
@@ -137,9 +138,22 @@ static void LoadConfig()
     }
     g_cfg.popInFix = IniBool("World", "PopInFix", true);
 
+    // [Camera]
+    g_cfg.fov = IniFloat("Camera", "FOV", 1.0f, 0.3f, 2.5f);
+    g_cfg.ultrawideFix = IniBool("Camera", "UltrawideFix", true);
+    g_cfg.zoomKeys = IniBool("Camera", "ZoomKeys", false);
+    g_cfg.zoomInKey = IniInt("Camera", "ZoomInKey", '1');
+    g_cfg.zoomOutKey = IniInt("Camera", "ZoomOutKey", '2');
+    g_cfg.zoomResetKey = IniInt("Camera", "ZoomResetKey", '3');
+    g_cfg.photoMode = IniBool("Camera", "PhotoMode", false);
+    g_cfg.photoModeKey = IniInt("Camera", "PhotoModeKey", 'F');
+    g_cfg.hudKey = IniInt("Camera", "HudKey", 0);
+
     // [Gameplay]
     g_cfg.unlockAll = IniBool("Gameplay", "UnlockAll", false);
     g_cfg.bonusContent = IniBool("Gameplay", "BonusContent", false);
+    g_cfg.unlockDecals = IniInt("Gameplay", "UnlockDecals", 0);
+    if (g_cfg.unlockDecals < 0 || g_cfg.unlockDecals > 2) g_cfg.unlockDecals = 0;
     g_cfg.skipIntro = IniInt("Gameplay", "SkipIntro", 0);
     g_cfg.boost = IniBool("Gameplay", "Boost", false);
     g_cfg.boostAcceleration = IniFloat("Gameplay", "BoostAcceleration", 15.0f, 1.0f, 100.0f);

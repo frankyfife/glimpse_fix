@@ -309,7 +309,9 @@ public:
         if (!data || (size != sizeof(DIJOYSTATE) && size != sizeof(DIJOYSTATE2))) return DIERR_INVALIDPARAM;
         if (!s_pads[m_slot].connected) return DIERR_INPUTLOST;
         DIJOYSTATE2 js;
-        BuildState(s_pads[m_slot].state.Gamepad, &js);
+        XINPUT_GAMEPAD pad = s_pads[m_slot].state.Gamepad;
+        if (CameraBlocksPad()) memset(&pad, 0, sizeof(pad));
+        BuildState(pad, &js);
         memcpy(data, &js, size);
         return DI_OK;
     }

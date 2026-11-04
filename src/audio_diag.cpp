@@ -1,5 +1,8 @@
-// Split/Second controller fix - FMOD event logging (Log=1 only): name and result of every
-// Event::start, to see which sounds and music the game asks for and what FMOD answers
+// Split/Second controller fix - FMOD events through the import of Event::start (0xB9B43C):
+//  - Log=1: name and result of every Event::start, to see which sounds and music the game asks for
+//    and what FMOD answers,
+//  - photo mode: the top level category of every event that starts is kept, so all of them can be
+//    paused while the world is held still (EventCategory::setPaused, FMOD's own API).
 #include "common.h"
 #include <string.h>
 
@@ -19,6 +22,43 @@ static GetU32_t s_getState;
 static GetFloat_t s_getVolume, s_catGetVolume;
 static GetPtr_t s_getCategory, s_catGetParent;
 static CatGetInfo_t s_catGetInfo;
+typedef int(__stdcall* SetBool_t)(void* obj, bool on);
+typedef int(__stdcall* GetBool_t)(void* obj, bool* out);
+static SetBool_t s_catSetPaused;
+static GetBool_t s_catGetPaused;
+
+// top level categories of the events seen so far, and whether they were paused before the photo mode
+static void* s_categories[32];
+static bool s_wasPaused[32];
+static int s_ncategories;
+
+static void NoteCategory(void* evt)
+{
+    void* cat = NULL;
+    if (!s_getCategory || s_getCategory(evt, &cat) != 0 || !cat) return;
+    for (int depth = 0; depth < 8 && s_catGetParent; depth++) {
+        void* parent = NULL;
+        if (s_catGetParent(cat, &parent) != 0 || !parent) break;
+        cat = parent;
+    }
+    for (int i = 0; i < s_ncategories; i++)
+        if (s_categories[i] == cat) return;
+    if (s_ncategories < 32) s_categories[s_ncategories++] = cat;
+}
+
+void PauseGameSound(bool pause)
+{
+    if (!s_catSetPaused) return;
+    for (int i = 0; i < s_ncategories; i++) {
+        if (pause) {
+            s_wasPaused[i] = false;
+            if (s_catGetPaused) s_catGetPaused(s_categories[i], &s_wasPaused[i]);
+            s_catSetPaused(s_categories[i], true);
+        } else if (!s_wasPaused[i]) {
+            s_catSetPaused(s_categories[i], false);
+        }
+    }
+}
 
 // music events get a state report a moment after they started
 struct Tracked {
@@ -65,6 +105,8 @@ void AudioDiagTick()
 static int __stdcall Hook_EventStart(void* evt)
 {
     int r = s_origStart(evt);
+    if (g_cfg.photoMode) NoteCategory(evt);
+    if (!g_cfg.log) return r;
     char* name = NULL;
     int index = -1;
     if (s_getInfo) s_getInfo(evt, &index, &name, NULL);
@@ -110,6 +152,8 @@ void InstallAudioDiagnostics()
     s_catGetVolume = (GetFloat_t)GetProcAddress(ev, "?getVolume@EventCategoryI@FMOD@@UAG?AW4FMOD_RESULT@@PAM@Z");
     s_catGetInfo = (CatGetInfo_t)GetProcAddress(ev, "?getInfo@EventCategoryI@FMOD@@UAG?AW4FMOD_RESULT@@PAHPAPAD@Z");
     s_catGetParent = (GetPtr_t)GetProcAddress(ev, "?getParentCategory@EventCategoryI@FMOD@@UAG?AW4FMOD_RESULT@@PAPAV12@@Z");
+    s_catSetPaused = (SetBool_t)GetProcAddress(ev, "?setPaused@EventCategoryI@FMOD@@UAG?AW4FMOD_RESULT@@_N@Z");
+    s_catGetPaused = (GetBool_t)GetProcAddress(ev, "?getPaused@EventCategoryI@FMOD@@UAG?AW4FMOD_RESULT@@PA_N@Z");
     Log("fmod exports: state=%p vol=%p cat=%p catvol=%p catinfo=%p parent=%p", s_getState, s_getVolume, s_getCategory,
         s_catGetVolume, s_catGetInfo, s_catGetParent);
     void* hook = (void*)Hook_EventStart;
@@ -117,5 +161,5 @@ void InstallAudioDiagnostics()
     VirtualProtect(kIatEventStart, 4, PAGE_READWRITE, &old);
     *kIatEventStart = hook;
     VirtualProtect(kIatEventStart, 4, old, &old);
-    Log("fmod event logging on");
+    Log(g_cfg.log ? "fmod event logging on" : "fmod categories noted for the photo mode");
 }

@@ -1,5 +1,6 @@
 // Split/Second controller fix - patches into SplitSecond.exe (Steam build, image base 0x400000)
 #include "common.h"
+#include <shlobj.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -273,9 +274,93 @@ static BYTE* const kUnlockAll[] = {
 static BYTE* const kBonusContent = (BYTE*)0x00D6C49C;  // PCcheat;Cobretti SlipStream .. Euro Livery Pack, 8 bytes apart
 static const int kBonusCount = 10;
 
+// Decals are the achievements: cAnchoviesPC (vtable 0xC4AAC4) at [0xD64E00]+0x208 keeps one byte per
+// achievement at [+0x2C] (count [+0x38], 47), saved with the profile. Entry 0 (the last decal) stands for all
+// the others; the game's own check for it (vtable +0x18, 0xA17E10) does not run on every unlock, so it is
+// asked for last through the same switch. Decal id 47 is the Pure one, the profile's HasPureSave byte at
+// [0xD64E6C] (the game sets it when a Pure save is found in AppData). Achievements 41..46 are only given in
+// the results of ranked online races (0x802870, behind the online check 0x800980); all others come from
+// the single player conditions. Mode 2 asks only for those six, and for entry 0 once all others are there.
+// The game's own debug unlock is used: tweakables Anchovies/UnlockAnchovy (0xD71954) and UnlockAnchovieID (0xD11B6C),
+// read by the race update (0x4BF180, single player races) which clears the switch and unlocks through the
+// game's normal path (0xA17F90; only with a signed in profile, [+4] and [+0x3C]). One achievement per
+// frame, and only while a single player race runs: the flags are set before the profile is loaded, and the
+// game saves the profile when the race ends. Before the first one the profile files are copied to a backup folder.
+static BYTE* const kUnlockAnchovy = (BYTE*)0x00D71954;
+static int* const kUnlockAnchovyId = (int*)0x00D11B6C;
+static const int kOnlineFirst = 41, kOnlineLast = 46;
+
+static void BackupSaves()
+{
+    char dir[MAX_PATH], from[MAX_PATH], to[MAX_PATH];
+    if (FAILED(SHGetFolderPathA(NULL, CSIDL_PERSONAL, NULL, 0, dir))) return;
+    strcat_s(dir, "\\Disney Interactive Studios\\Split Second\\");
+    sprintf_s(to, "%sglimpse_backup", dir);
+    if (!CreateDirectoryA(to, NULL)) {
+        Log("decals: profile backup %s exists, kept", to);  // the one from before the first unlock
+        return;
+    }
+    sprintf_s(from, "%s*.sav", dir);
+    WIN32_FIND_DATAA fd;
+    HANDLE h = FindFirstFileA(from, &fd);
+    int copied = 0;
+    if (h != INVALID_HANDLE_VALUE) {
+        do {
+            sprintf_s(from, "%s%s", dir, fd.cFileName);
+            sprintf_s(to, "%sglimpse_backup\\%s", dir, fd.cFileName);
+            if (CopyFileA(from, to, TRUE)) copied++;
+        } while (FindNextFileA(h, &fd));
+        FindClose(h);
+    }
+    Log("decals: %d profile files backed up to %sglimpse_backup", copied, dir);
+}
+
+static void UnlockDecals()
+{
+    static bool backedUp, done, pureLogged;
+    static int asked = -1;
+    BYTE* pure = *(BYTE**)0x00D64E6C;
+    if (pure && !*pure) {  // the game clears it again when it looks for Pure saves, so it is kept set
+        *pure = 1;
+        if (!pureLogged) Log("decals: Pure decal unlocked");
+        pureLogged = true;
+    }
+    if (done || *kUnlockAnchovy || !SinglePlayerRace()) return;  // or the game has not taken the last request yet
+    BYTE* mgr = *(BYTE**)0x00D64E00;
+    BYTE* ach = mgr ? mgr + 0x208 : NULL;
+    if (!ach || IsBadReadPtr(ach, 0x40) || *(DWORD*)ach != 0x00C4AAC4 || !ach[4] || !ach[0x3C]) return;
+    BYTE* unlocked = *(BYTE**)(ach + 0x2C);
+    int count = *(int*)(ach + 0x38);
+    if (count < 2 || count > 64 || IsBadReadPtr(unlocked, count)) return;
+    bool onlineOnly = g_cfg.unlockDecals == 2;
+    int next = -1, missing = 0;
+    for (int i = 1; i < count; i++) {
+        if (unlocked[i]) continue;
+        bool online = i >= kOnlineFirst && i <= kOnlineLast;
+        if (next < 0 && (!onlineOnly || online)) next = i;
+        missing++;
+    }
+    if (next < 0 && !missing && !unlocked[0]) next = 0;
+    if (next < 0) {
+        done = true;
+        if (missing) Log("decals: online achievements unlocked, %d others still to earn", missing);
+        else Log("decals: all %d achievements unlocked", count);
+        return;
+    }
+    if (!backedUp) {
+        backedUp = true;
+        BackupSaves();
+    }
+    if (next != asked) Log("decals: unlocking achievement %d", next);
+    asked = next;
+    *kUnlockAnchovyId = next;
+    *kUnlockAnchovy = 1;
+}
+
 static void ApplyUnlocks()
 {
     static bool logged;
+    if (g_cfg.unlockDecals) UnlockDecals();
     if (g_cfg.unlockAll)
         for (BYTE* b : kUnlockAll) *b = 1;
     if (g_cfg.bonusContent)
@@ -401,20 +486,6 @@ static void HookIntroSkip()
 }
 
 // ---------------------------------------------------------------- prompt bar glyphs
-
-// Scaleform GFxValue as laid out by this game's GFx build
-struct GFxValue {
-    DWORD type;
-    DWORD pad;
-    union {
-        const char* str;
-        double num;
-    };
-};
-enum { GFX_STRING = 4, GFX_RESULT_STRING = 0x14 };
-
-typedef bool(__thiscall* GFxInvoke_t)(void* movie, const char* path, GFxValue* result, const GFxValue* args, unsigned count);
-typedef bool(__thiscall* GFxSetVariable_t)(void* movie, const char* path, const GFxValue* value, int setType);
 
 static bool s_padGlyphsShown;
 static DWORD s_lastPadActivity, s_lastKbmActivity;
@@ -674,6 +745,7 @@ void OnInputFrame()
     if (s_knownBuild && (g_cfg.patchMask & PATCH_UNLOCK)) ApplyUnlocks();
     if (s_knownBuild && (g_cfg.patchMask & PATCH_FLARES)) ApplyLensFlare();
     if (s_knownBuild && (g_cfg.boost || g_cfg.powerFill || g_cfg.aiBoost) && (g_cfg.patchMask & PATCH_BOOST)) BoostTick();
+    if (s_knownBuild && (g_cfg.zoomKeys || g_cfg.photoMode || g_cfg.hudKey) && (g_cfg.patchMask & PATCH_CAMERA)) CameraTick();
     if (g_cfg.log && s_knownBuild) WatchVmContexts();
     if (g_cfg.log && (g_cfg.patchMask & PATCH_SAVEDIAG)) WatchSaveFiles();
     if (g_cfg.log) {
@@ -748,6 +820,7 @@ void ApplyGamePatches()
     if (mask & PATCH_VIGNETTE) PatchVignette();
     if (mask & PATCH_FLARES) PatchBloomAndFlares();
     if (mask & PATCH_RENDERSCALE) PatchRenderScale();
+    if (mask & PATCH_CAMERA) PatchCamera();
     if (g_cfg.profile) InstallProfiler();
-    if (g_cfg.log && (mask & PATCH_AUDIODIAG)) InstallAudioDiagnostics();
+    if ((g_cfg.log || g_cfg.photoMode) && (mask & PATCH_AUDIODIAG)) InstallAudioDiagnostics();
 }

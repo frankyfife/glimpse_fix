@@ -57,7 +57,8 @@ void PatchMotionBlur()
 // 0xBB4048). Its parameter block at this+0x14 holds the camera's vignette (Cameras/Data/*/Vignette*):
 // colour rgb at +0x38, then U scale, V scale, inner and outer distance at +0x48..+0x54. With both
 // scales at 0 every pixel sits at the centre, inside the inner distance, so nothing is darkened
-// while the grading and gradient stay as they are.
+// while the grading and gradient stay as they are. The gradient (the translucent blue band at the top
+// of the screen) has its colour rgba at +0x1C..+0x2C; Gradient=0 sets its alpha to 0 for the call.
 static BYTE* const kGradeRender = (BYTE*)0x0049A7A0;
 static void** const kGradeSlot = (void**)0x00BB4048;
 static MotionBlurRender_t s_origGrade;
@@ -78,16 +79,19 @@ static void __fastcall Hook_GradeRender(BYTE* self, void*, void* a, void* b, voi
         s_origGrade(self, a, b, c, d, e);
         return;
     }
-    float u = vig[0], v = vig[1];
-    vig[0] = vig[1] = 0.0f;
+    float* alpha = (float*)(params + 0x2C);
+    float u = vig[0], v = vig[1], gradient = *alpha;
+    if (!g_cfg.vignette) vig[0] = vig[1] = 0.0f;
+    if (!g_cfg.gradient) *alpha = 0.0f;
     s_origGrade(self, a, b, c, d, e);
     vig[0] = u;
     vig[1] = v;
+    *alpha = gradient;
 }
 
 void PatchVignette()
 {
-    if (g_cfg.vignette) return;
+    if (g_cfg.vignette && g_cfg.gradient) return;
     if (memcmp(kGradeRender, "\x83\xEC\x08\x57\x8B\xF9", 6) || *kGradeSlot != kGradeRender) {
         Log("vignette pass not recognised");
         return;
@@ -95,7 +99,7 @@ void PatchVignette()
     s_origGrade = (MotionBlurRender_t)kGradeRender;
     void* hook = (void*)Hook_GradeRender;
     WriteMemory(kGradeSlot, &hook, sizeof(hook));
-    Log("vignette off");
+    Log("vignette %s, gradient %s", g_cfg.vignette ? "on" : "off", g_cfg.gradient ? "on" : "off");
 }
 
 // Bloom (0x492F50, cSSBloomEffect vtable slot 0xBB3678). The same pass also tone maps the frame; its
