@@ -215,20 +215,36 @@ The one exception is `RenderScale` set to a number (see Known limitations).
 ## The Xbox content modpack (Xenon.dll)
 
 There is a pack that brings the Xbox 360 DLC to the PC (the "elysium" package with `Xenon.dll`).
-glimpse_fix does not support it and will not build on it:
+glimpse_fix does not support it and will not build on it. What the pack is:
 
-1. **It is not the Steam game any more.** The pack overwrites `SplitSecond.exe` with a different,
-   older build (not the Steam release) that is patched to load `Xenon.dll`, which then patches the
-   game in memory. glimpse_fix is written for the unmodified Steam exe and checks the expected
-   bytes before every patch; on the replaced exe those checks fail and most of the fix switches
-   itself off (60 fps, streaming pool, pop-in fix, button prompts, icon size, ...). Porting it to
-   that exe would mean supporting a build Steam owners never bought.
-2. **Copy protection.** glimpse_fix never changes game code, leaves SecuROM fully intact and needs
-   neither a modified nor a cracked exe. A pack that replaces the exe and patches code in memory
-   works the opposite way, and the two are not mixed.
-3. **Content.** The new tracks and modes (Quarry, Minepit Park, Deadline, Onslaught, Survival) and
-   the car packs are the paid Xbox 360 DLC, which was never released for PC. The pack
-   redistributes them without a license. That is tolerated, not allowed, and it has no place here.
+* **The free PC demo instead of the game.** The pack overwrites `SplitSecond.exe` with the
+  executable of the official Split/Second PC demo (version 1.3.8.0, "Split Second DEMO
+  executable"). The demo exe is patched on disk to load `Xenon.dll` at startup.
+* **Xenon.dll turns the demo into the full game** by patching it in memory, about 30 places,
+  roughly half of them code (jumps, immediates, push operands), some in code that SecuROM only
+  decrypts at runtime:
+  * demo names and demo parameter files are replaced by those of the full game, a demo setting
+    is switched off, the demo's end-of-race state is skipped and its graphics quality limit lifted,
+  * the track tables are rebuilt with 17 instead of 15 entries (Quarry and Nem_Quarry added),
+    together with the matching track count limits,
+  * 14 in-game music tracks in shuffled order instead of the demo's 3,
+  * the `PCcheat` switches are renamed so `SplitSecond.params` unlocks the retailer cars and the
+    Euro livery pack,
+  * the prompt bar uses the Xbox 360 or PC prompt movie from the pack.
+* **Data:** the pack replaces `Resident.ark` and the level archives, and adds the paid Xbox 360
+  DLC (the Quarry tracks, Deadline, Onslaught, Survival, the car and livery packs), which was
+  never released for PC, without a license.
+
+Why glimpse_fix stays away from it:
+
+1. **It is not the Steam game.** glimpse_fix is written for the unmodified Steam exe and checks
+   the expected bytes before every patch. On the demo exe those checks fail and most of the fix
+   switches itself off (60 fps, streaming pool, pop-in fix, button prompts, icon size, ...).
+2. **Copy protection.** glimpse_fix never changes game code and leaves SecuROM fully in place.
+   The pack patches game code and runs the full game on the demo exe, so the full version's
+   executable and its protection are not used at all.
+3. **Content.** The pack redistributes Disney's DLC and game data without a license. That is
+   tolerated, not allowed, and it has no place here.
 
 What glimpse_fix does instead: everything the Steam version already ships but keeps locked can be
 unlocked through the game's own switches, without code changes: all tracks, modes and cars
