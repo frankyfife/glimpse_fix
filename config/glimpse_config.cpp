@@ -14,6 +14,7 @@
 #include <commdlg.h>
 #include <ctype.h>
 #include <stdio.h>
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 #include <string>
@@ -230,14 +231,13 @@ static void SetValue(const Option& o, const std::string& v)
 // dark theme: the controls are drawn here; the lists open as popup menus in Windows' dark menu style
 static const COLORREF kBack = RGB(24, 25, 28), kSide = RGB(32, 33, 38), kSideSel = RGB(46, 48, 55),
                       kField = RGB(48, 50, 57), kBorder = RGB(66, 69, 78), kText = RGB(232, 233, 236),
-                      kDim = RGB(150, 154, 163), kOff = RGB(88, 91, 99), kAccent = RGB(255, 120, 20),
-                      kAccent2 = RGB(255, 70, 35);
+                      kDim = RGB(150, 154, 163), kOff = RGB(88, 91, 99), kAccent = RGB(255, 120, 20);
 static HBRUSH s_backBrush, s_sideBrush, s_fieldBrush;
 static HFONT s_font, s_fontBold, s_fontTitle, s_fontBrand, s_fontSmall;
 
 enum Role { R_NONE, R_LABEL, R_VALUE, R_DIM, R_TITLE, R_BRAND, R_SIDEDIM, R_NAV, R_PRESET, R_ACTION, R_TOGGLE, R_SELECT };
 
-static HWND s_wnd, s_status, s_info, s_title, s_subtitle, s_nav[5];
+static HWND s_wnd, s_status, s_info, s_title, s_subtitle, s_nav[kPageCount], s_preset[3];
 static int s_dpi = 96;
 static int s_page;
 static bool s_loading;
@@ -287,10 +287,13 @@ static int WindowDpi(HWND wnd)
     return dpi;
 }
 
+// layout, in 96 dpi pixels
+static const int kWidth = 880, kHeight = 700, kSideW = 210, kContentX = 240, kLabelW = 300, kRowH = 33, kRowTop = 100;
+
 // the outer window size for the client area at the current DPI
 static SIZE WindowSize(DWORD style)
 {
-    RECT r = { 0, 0, MulDiv(880, s_dpi, 96), MulDiv(660, s_dpi, 96) };
+    RECT r = { 0, 0, S(kWidth), S(kHeight) };
     typedef BOOL(WINAPI * Adjust_t)(RECT*, DWORD, BOOL, DWORD, UINT);
     Adjust_t adjust = (Adjust_t)GetProcAddress(GetModuleHandleA("user32.dll"), "AdjustWindowRectExForDpi");
     if (adjust) adjust(&r, style, FALSE, 0, (UINT)s_dpi);
@@ -448,6 +451,7 @@ static void LoadControls()
     }
     s_loading = false;
     UpdateEnables();
+    for (HWND b : s_preset) InvalidateRect(b, NULL, TRUE);  // the preset that matches is outlined
 }
 
 static void Changed(Option& o)
@@ -469,6 +473,7 @@ static void Changed(Option& o)
     }
     SetValue(o, v);
     UpdateEnables();
+    for (HWND b : s_preset) InvalidateRect(b, NULL, TRUE);
     char msg[200];
     if (SaveIni()) sprintf(msg, "Saved  %s = %s", o.key, v.c_str());
     else sprintf(msg, "Could not write %s", s_path);
@@ -510,18 +515,37 @@ static const Preset kPresets[] = {
     { "Chaos", "UnlockAll=1;Boost=1;PowerBarFill=1;AIBoost=1;AIBoostChaos=1" },
 };
 
+// the value a preset gives an option: its own, else the option's default
+static std::string PresetValue(const Preset& p, const Option& o)
+{
+    std::string list = std::string(";") + p.values + ";", pat = std::string(";") + o.key + "=";
+    size_t at = list.find(pat);
+    if (at == std::string::npos) return o.def;
+    size_t s = at + pat.size();
+    return list.substr(s, list.find(';', s) - s);
+}
+
+// whether every option (Debug aside) currently has the value the preset gives it
+static bool PresetMatches(const Preset& p)
+{
+    for (const Option& o : kOptions) {
+        if (!strcmp(o.section, "Debug")) continue;
+        std::string want = PresetValue(p, o), have = GetValue(o);
+        if (!_stricmp(want.c_str(), have.c_str())) continue;
+        char* end1;
+        char* end2;
+        double a = strtod(want.c_str(), &end1), b = strtod(have.c_str(), &end2);
+        if (!*end1 && !*end2 && end1 != want.c_str() && end2 != have.c_str() && fabs(a - b) < 1e-6) continue;
+        return false;
+    }
+    return true;
+}
+
 static void ApplyPreset(const Preset& p)
 {
     for (Option& o : kOptions) {
         if (!strcmp(o.section, "Debug")) continue;
-        std::string v = o.def;
-        std::string list = std::string(";") + p.values + ";", pat = std::string(";") + o.key + "=";
-        size_t at = list.find(pat);
-        if (at != std::string::npos) {
-            size_t s = at + pat.size();
-            v = list.substr(s, list.find(';', s) - s);
-        }
-        SetValue(o, v);
+        SetValue(o, PresetValue(p, o));
     }
     LoadControls();
     char msg[160];
@@ -540,8 +564,6 @@ static HWND Child(const char* cls, const char* text, DWORD style, int x, int y, 
 
 enum { ID_NAV0 = 10, ID_PRESET0 = 20, ID_OPEN = 30, ID_CLOSE = 31, ID_RESTORE = 32, ID_OPTION0 = 100 };
 
-// layout, in 96 dpi pixels
-static const int kWidth = 880, kHeight = 700, kSideW = 210, kContentX = 240, kLabelW = 300, kRowH = 33, kRowTop = 100;
 
 static void CreateControls()
 {
@@ -553,8 +575,8 @@ static void CreateControls()
                          S(40), ID_NAV0 + i, R_NAV, s_font);
     Child("STATIC", "PRESETS", WS_VISIBLE | SS_LEFT, S(22), S(424), S(160), S(18), 0, R_SIDEDIM, s_fontSmall);
     for (int i = 0; i < 3; i++)
-        Child("BUTTON", kPresets[i].name, WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW, S(18), S(448) + i * S(40), S(174), S(32),
-              ID_PRESET0 + i, R_PRESET, s_font);
+        s_preset[i] = Child("BUTTON", kPresets[i].name, WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW, S(18), S(448) + i * S(40),
+                            S(174), S(32), ID_PRESET0 + i, R_PRESET, s_font);
 
     s_title = Child("STATIC", "", WS_VISIBLE | SS_LEFT, S(kContentX), S(26), S(600), S(36), 0, R_TITLE, s_fontTitle);
     s_subtitle = Child("STATIC", "", WS_VISIBLE | SS_LEFT, S(kContentX), S(64), S(610), S(22), 0, R_DIM, s_font);
@@ -716,7 +738,8 @@ static void DrawButton(const DRAWITEMSTRUCT* di)
     HBRUSH b = CreateSolidBrush(role == R_PRESET ? kSide : kBack);
     FillRect(dc, &r, b);
     DeleteObject(b);
-    COLORREF line = role == R_PRESET && !strcmp(text, "Chaos") ? kAccent2 : kBorder;
+    bool current = role == R_PRESET && PresetMatches(kPresets[GetDlgCtrlID(di->hwndItem) - ID_PRESET0]);
+    COLORREF line = current ? kAccent : kBorder;
     RoundRect(dc, r, S(10), pressed ? kSideSel : (role == R_PRESET ? kSide : kField), line);
     SelectObject(dc, s_font);
     SetTextColor(dc, kText);

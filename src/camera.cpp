@@ -14,6 +14,11 @@
 // wider screens than 16:9 lose picture at the top and bottom. UltrawideFix widens the horizontal FOV
 // until the vertical one matches 16:9 again (single screen only, split screen keeps the game's view).
 //
+// The near plane is 1 m (0x4B8DD0 takes the state's own +0x64 instead while the byte at +0x60 is set; the
+// projection is built from it at 0x50C0D0). With a much wider FOV the bottom of the picture looks down at
+// the road right below the camera, nearer than 1 m, and the road is cut away there. So with the FOV the near
+// plane gets closer by the same ratio: the road is cut at the same place on screen as with the game's FOV.
+//
 // Photo mode, during a race: the game's slow motion tweakables, "Physics/Change Phys dt/Slow motion
 // activated" (0xD71208) and "Slow Motion cheat speed" (0xD113B8, scales the simulation step), hold
 // the world almost still (speed 0.0001) while the cameras keep running in real time. The race camera's
@@ -73,9 +78,9 @@ static float ScreenAspect()
     return w > 0 && h > 0 ? (float)w / h : 16.0f / 9;
 }
 
-// the game's values of each changed state (+4 to +0x4C: position, axes, both FOVs) and what the hook
-// wrote over them
-enum { kPose = 4, kPoseLen = 0x48 };
+// the game's values of each changed state (+4 to +0x68: position, axes, both FOVs, near plane switch and
+// distance) and what the hook wrote over them
+enum { kPose = 4, kPoseLen = 0x64 };
 struct Saved { BYTE* state; BYTE stock[kPoseLen], set[kPoseLen]; };
 static Saved s_saved[32];
 
@@ -113,12 +118,29 @@ static void ScaleFov(BYTE* state, float factor, bool ultrawide)
     float* fov = (float*)(state + 0x44);
     float stock = *fov;
     if (!(stock > 0.01f && stock < 3.0f)) return;
-    float f = stock * factor;
+    float base = stock, f = stock * factor;
     if (ultrawide && g_cfg.ultrawideFix && Viewports() == 1) {
         float wide = ScreenAspect() / (16.0f / 9);
-        if (wide > 1.01f) f = 2.0f * atanf(tanf(f * 0.5f) * wide);
+        if (wide > 1.01f) {
+            base = 2.0f * atanf(tanf(base * 0.5f) * wide);
+            f = 2.0f * atanf(tanf(f * 0.5f) * wide);
+        }
     }
     f = f < 0.05f ? 0.05f : f > 2.97f ? 2.97f : f;
+    base = base > 2.97f ? 2.97f : base;
+    float ratio = tanf(f * 0.5f) / tanf(base * 0.5f);  // how much wider than with the ultrawide correction alone
+    if (ratio > 1.001f) {
+        BYTE* nearOn = state + 0x60;
+        float* nearDist = (float*)(state + 0x64);
+        float game = *nearOn && *nearDist > 0.0f ? *nearDist : 1.0f;
+        float n = game / ratio;
+        n = n < 0.05f ? 0.05f : n;
+        *nearOn = 1;
+        *nearDist = n;
+        static bool logged;
+        if (!logged) Log("camera fov: view %.2f times wider, near plane %.2f m", ratio, *nearDist);
+        logged = true;
+    }
     if (f == stock) return;
     fov[0] = f;
     fov[1] *= f / stock;

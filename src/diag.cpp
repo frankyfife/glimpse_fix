@@ -68,8 +68,42 @@ static HRESULT STDMETHODCALLTYPE Hook_SetTexture(IDirect3DDevice9* dev, DWORD st
     return hr;
 }
 
+// The motion blur pass samples along the motion; at speed (and more so with the doubled blur at 60 fps
+// and the boost) the samples near the bottom edge reach past the picture and bring in a thin line from
+// outside it. While the pass runs, U and V addressing of the first stages is clamped to the edge. What
+// the game sets meanwhile is kept and set when the pass ends, so the device ends up in the state the game
+// expects (it skips settings it believes are already there).
+static IDirect3DDevice9* s_device;
+static bool s_clamp;
+static DWORD s_wantAddress[8][2];  // U, V as the game wants them
+
+void BeginEdgeClamp()
+{
+    if (!s_device || !s_origSetSamplerState || s_clamp) return;
+    for (DWORD stage = 0; stage < 8; stage++)
+        for (int i = 0; i < 2; i++) {
+            D3DSAMPLERSTATETYPE type = i ? D3DSAMP_ADDRESSV : D3DSAMP_ADDRESSU;
+            if (FAILED(s_device->GetSamplerState(stage, type, &s_wantAddress[stage][i]))) s_wantAddress[stage][i] = D3DTADDRESS_WRAP;
+            s_origSetSamplerState(s_device, stage, type, D3DTADDRESS_CLAMP);
+        }
+    s_clamp = true;
+}
+
+void EndEdgeClamp()
+{
+    if (!s_clamp) return;
+    s_clamp = false;
+    for (DWORD stage = 0; stage < 8; stage++)
+        for (int i = 0; i < 2; i++)
+            s_origSetSamplerState(s_device, stage, i ? D3DSAMP_ADDRESSV : D3DSAMP_ADDRESSU, s_wantAddress[stage][i]);
+}
+
 static HRESULT STDMETHODCALLTYPE Hook_SetSamplerState(IDirect3DDevice9* dev, DWORD stage, D3DSAMPLERSTATETYPE type, DWORD value)
 {
+    if (s_clamp && stage < 8 && (type == D3DSAMP_ADDRESSU || type == D3DSAMP_ADDRESSV)) {
+        s_wantAddress[stage][type == D3DSAMP_ADDRESSV] = value;
+        return s_origSetSamplerState(dev, stage, type, D3DTADDRESS_CLAMP);
+    }
     if (stage < 16 && type == D3DSAMP_MINFILTER) {
         s_stages[stage].minFilter = value;
         ApplyFilter(dev, stage);
@@ -152,11 +186,12 @@ static HRESULT STDMETHODCALLTYPE Diag_CreateDevice(IDirect3D9* d3d, UINT adapter
         Log("available texture memory %u MB", (*out)->GetAvailableTextureMem() >> 20);
         void** vt = *(void***)*out;
         if (g_cfg.log || g_cfg.frameRate == 60) PatchVtable(vt, 17, (void*)Diag_Present, (void**)&s_origPresent);
+        s_device = *out;
         if (g_cfg.anisotropy > 1) {
             PatchVtable(vt, 65, (void*)Hook_SetTexture, (void**)&s_origSetTexture);
-            PatchVtable(vt, 69, (void*)Hook_SetSamplerState, (void**)&s_origSetSamplerState);
             Log("anisotropic filtering %dx", g_cfg.anisotropy);
         }
+        PatchVtable(vt, 69, (void*)Hook_SetSamplerState, (void**)&s_origSetSamplerState);  // filtering, edge clamp
     }
     return hr;
 }

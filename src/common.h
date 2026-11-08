@@ -96,6 +96,8 @@ bool PadSlotConnected(int slot);
 
 // diag.cpp
 void InstallD3DHooks();  // device log/capture (Log=1), anisotropic filtering
+void BeginEdgeClamp();   // until EndEdgeClamp: texture addressing clamped at the edges (motion blur pass)
+void EndEdgeClamp();
 
 // audio_diag.cpp
 void InstallAudioDiagnostics();

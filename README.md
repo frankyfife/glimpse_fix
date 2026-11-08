@@ -147,7 +147,9 @@ draw at once.
   The route change markers (red and blue arrows) get their size as width x 2.25/1280, a constant
   only that code reads; it is set to 2.25 / width.
 * **Motion blur:** it blurs along one frame of camera motion, which at 60 fps is half as much;
-  the amount is doubled. `MotionBlurStrength` scales it further.
+  the amount is doubled. `MotionBlurStrength` scales it further. At speed its samples reach past the
+  picture's edge and left a thin line at the bottom of the screen; during the blur pass the textures
+  are clamped to the edge (through the Direct3D device's sampler states).
 * **Vignette and gradient:** the race cameras darken the screen edges and lay a translucent blue
   band over the top of the screen in the grading pass. `Vignette=0` sets the vignette's U/V scale
   to 0 for that pass, `Gradient=0` the gradient's alpha; the grading itself stays.
@@ -164,7 +166,9 @@ draw at once.
 ### Camera
 
 * **Field of view:** `FOV` scales the race cameras' (chase and bumper) field of view; the game's
-  widening with speed stays on top of it.
+  widening with speed stays on top of it. The game's near plane is 1 m; with a much wider view the
+  bottom of the picture looks down at the road right below the camera and would see through it, so
+  the near plane moves closer by the same ratio (the camera state's own near plane setting).
 * **Ultrawide:** the game keeps the horizontal field of view, so screens wider than 16:9 lose
   picture at the top and bottom. `UltrawideFix` widens the view until the vertical one matches
   16:9 again (single screen only).
@@ -194,7 +198,8 @@ How the fix avoids it: **no game code is changed at all.** Everything works thro
 
 * values in the game's data: tweakables and their records (frame pacing, streaming pool, LOD and
   streaming distances, debug, unlock and lens flare switches, the achievements' debug unlock, the
-  slow motion and HUD render switches of the photo mode, AI skill limits), loaded HUD
+  slow motion and HUD render switches of the photo mode, the race cameras' FOV and near plane, AI
+  skill limits), loaded HUD
   parameters, powerplay distance records, the main loop's accumulator, the power bar, the AI skill
   and the cars' chassis velocity,
 * swapped vtable slots (motion blur, grading, bloom and particle flare passes, AI player update,

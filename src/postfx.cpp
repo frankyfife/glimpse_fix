@@ -29,14 +29,16 @@ static void __fastcall Hook_MotionBlurRender(BYTE* self, void*, void* a, void* b
                 params ? *(int*)(params + 0x20) : -1, *(int*)0x00D0F7E8);
     }
     float scale = s_blurScale * BoostBlurScale();
+    BeginEdgeClamp();  // samples past the picture's edge would bring in a line at the bottom (diag.cpp)
     if (!amount || scale == 1.0f) {
         s_origMotionBlur(self, a, b, c, d, e);
-        return;
+    } else {
+        float stock = *amount;
+        *amount = stock * scale;
+        s_origMotionBlur(self, a, b, c, d, e);
+        *amount = stock;
     }
-    float stock = *amount;
-    *amount = stock * scale;
-    s_origMotionBlur(self, a, b, c, d, e);
-    *amount = stock;
+    EndEdgeClamp();
 }
 
 void PatchMotionBlur()
