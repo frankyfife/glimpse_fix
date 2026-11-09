@@ -153,6 +153,7 @@ static void LoadConfig()
     g_cfg.unlockAll = IniBool("Gameplay", "UnlockAll", false);
     g_cfg.bonusContent = IniBool("Gameplay", "BonusContent", false);
     g_cfg.unlockDecals = IniInt("Gameplay", "UnlockDecals", 0);
+    g_cfg.wreckTime = IniFloat("Gameplay", "WreckTime", 0.0f, 0.0f, 120.0f);
     if (g_cfg.unlockDecals < 0 || g_cfg.unlockDecals > 2) g_cfg.unlockDecals = 0;
     g_cfg.skipIntro = IniInt("Gameplay", "SkipIntro", 0);
     g_cfg.boost = IniBool("Gameplay", "Boost", false);

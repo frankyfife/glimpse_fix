@@ -174,10 +174,16 @@ draw at once.
   16:9 again (single screen only).
 * **Zoom keys:** hold a key to zoom the race camera closer or wider, another one resets it.
 * **Photo mode:** during a race, a key or the pad's Back button holds the world still (the game's
-  own slow motion at 0.0001), hides the HUD and all on-screen messages and frees the camera: left
+  own slow motion at 0.000001), hides the HUD and all on-screen messages and frees the camera: left
   stick or W A S D to move, right stick or I J K L to look, the triggers or Q E down and up, A or
-  Shift faster, LB RB or the zoom keys to zoom, Y + LB RB or U O to tilt. Back, B or the key again
-  returns to the race. The game's sound is paused meanwhile (FMOD's own category pause).
+  Shift faster, LB RB or the zoom keys to zoom, Y + LB RB or U O to tilt. The d-pad or the arrow
+  keys set the look: up and down the focus distance (it switches the depth of field on at half
+  strength when it is off), left and right the depth of field (the game's own depth of field pass,
+  left end = off; not at the lowest graphics quality); with X or Ctrl held, up and down bloom (down
+  to off) and left and right exposure; the left stick click or Backspace resets it. No car is put
+  back on the track while it is on. Back, B, Esc or the key again returns to the race. The game's
+  sound is paused meanwhile (FMOD's own category pause). Crashes take it over only in part, see
+  Known limitations.
 * **HUD key:** switches the power bar and the info bar off and on during a race.
 
 ## Copy protection
@@ -202,13 +208,15 @@ How the fix avoids it: **no game code is changed at all.** Everything works thro
   skill limits), loaded HUD
   parameters, powerplay distance records, the main loop's accumulator, the power bar, the AI skill
   and the cars' chassis velocity,
-* swapped vtable slots (motion blur, grading, bloom and particle flare passes, AI player update,
-  chase and bumper camera update),
+* swapped vtable slots (motion blur, grading, bloom, depth of field and particle flare passes, AI
+  player update, chase and bumper camera update, with the photo mode the other camera classes'
+  update, the respot logic's update with the photo mode or `WreckTime`),
   import table entries (`XInputSetState`, Bink's `BinkOpen`/`BinkWait`/`BinkDoFrame`, FMOD's
   `Event::start`), read-only
   strings and constants (prompt bar icon paths, route marker size),
 * the Direct3D device's vtable, and calls into the game's own functions (dictionary lookup,
-  Scaleform `Invoke`/`SetVariable` for the prompt bar and the photo mode's HUD) from the input poll.
+  Scaleform `Invoke`/`SetVariable` for the prompt bar, `SetVisible` for the photo mode's overlays,
+  the depth of field blur setup) from the input poll and the hooked passes.
 
 The prompt bar glyphs, the title screen text, the icon size, the 60 fps and the streaming pool were
 first done with code patches and each set off exactly this hang, so they were rebuilt this way.
@@ -328,6 +336,7 @@ The file is split into sections. INIs from older versions with everything under 
 | `UnlockAll` | 0 | 1 = all tracks, events, episodes, game modes and vehicles selectable (the game's own switches; the profile is not changed). |
 | `SkipIntro` | 0 | Boot movies at every start: 1 = skip the publisher logo, 2 = also the game intro. They end at once without decoding (the movie files stay untouched). 0 = stock. |
 | `BonusContent` | 0 | 1 = the PC version's cheat code extras: Expressway track, Cobretti SlipStream, retailer branded cars, Euro livery pack. |
+| `WreckTime` | 0 | **Highly experimental: can softlock the game, especially together with the photo mode.** Seconds from a wreck of your car to the respot (about 4 s in the game; 0 = as the game): the game's respot logic is left out until then, the crash camera keeps showing the wreck. The photo mode holds the respot of all cars while it is on. |
 | `UnlockDecals` | 0 | Achievements and their decals: 1 = all, 2 = only the unobtainable ones (achievements 41–46 from ranked online races and the Pure decal; the "all achievements" decal follows once the rest is earned). Unlocked in the next single player race and saved with the profile, so they stay when set back to 0; the Pure decal shows while this is set. The `.sav` files are copied to `glimpse_backup` before the first unlock. |
 | `Boost` | 0 | 1 = X held gives player 1 extra speed along the car's heading. |
 | `BoostKey` | 0xA0 | Keyboard key that works like X for the boost, a virtual key code (0xA0 = left Shift). 0 = pad only. |
@@ -360,6 +369,12 @@ The file is split into sections. INIs from older versions with everything under 
   the only option that changes game code. Leave it at `auto` if the game hangs after a few
   minutes with it set.
 * Boost, the power bar fill, the photo mode and the HUD key work for player 1 only.
+* Photo mode on crashes: once your car is wrecked, the game's crash sequence decides the view.
+  On a crash on the road (walls, other cars, power plays) the photo camera stays tied to the car
+  and is not fully free. After leaving the track (falls) the game holds a waiting view that no
+  camera drives, so the photo camera cannot take it over at all. Both would need changes to the
+  game code, which this project does not make (see Copy protection). Enter the photo mode before
+  the crash happens for a free camera.
 * `UnlockDecals` works in single player races only (the game's own unlock runs there), and the
   profile is saved when the race ends: finish it or leave it through the pause menu. The Pure
   decal is reset by the game whenever it looks for Pure saves, so it is shown only while the

@@ -34,6 +34,7 @@ struct Config {
     bool  popInFix;          // ignore the sectors' precomputed visibility lists (distance and frustum only)
     bool  unlockAll;         // all tracks, events, episodes, game modes and vehicles selectable
     bool  bonusContent;      // the PC cheat code extras: Expressway track, branded cars, liveries
+    float wreckTime;         // seconds from a wreck to the respot, 0 = the game's (3 s)
     int   unlockDecals;      // achievement decals: 0 off, 1 all, 2 only the online ones and the Pure decal (saved)
     bool  boost;             // X held: extra acceleration for player 1
     int   boostKey;          // virtual key that works like X for the boost, 0 = none
@@ -116,7 +117,11 @@ void ProfilerTick();
 void PatchMotionBlur();
 void PatchVignette();
 void PatchBloomAndFlares();
+void PatchDepthOfField();  // PhotoMode=1: the depth of field pass, used by the photo mode only
 void ApplyLensFlare();  // per frame
+// the photo mode's look, set by camera.cpp: bloom and exposure multiply the game's values (1 = as is,
+// bloom 0 = off), depth of field strength 0..1 (0 = the game's own) with the focus distance in metres
+extern float g_photoBloom, g_photoExposure, g_photoDof, g_photoFocus;
 
 // boost.cpp
 void BoostTick();        // per input frame: boost on X or BoostKey, power bar fill on LS+RS or PowerBarFillKey

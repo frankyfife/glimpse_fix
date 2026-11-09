@@ -821,6 +821,7 @@ void ApplyGamePatches()
     if (mask & PATCH_FLARES) PatchBloomAndFlares();
     if (mask & PATCH_RENDERSCALE) PatchRenderScale();
     if (mask & PATCH_CAMERA) PatchCamera();
+    if (mask & PATCH_CAMERA) PatchDepthOfField();
     if (g_cfg.profile) InstallProfiler();
     if ((g_cfg.log || g_cfg.photoMode) && (mask & PATCH_AUDIODIAG)) InstallAudioDiagnostics();
 }

@@ -141,10 +141,13 @@ static void ReadBloomSettings()
     }
 }
 
+static void PhotoDofSwitch();  // below
+
 static void __fastcall Hook_BloomRender(BYTE* self, void*, void* a, void* b, void* c, void* d, void* e)
 {
     BYTE* params = *(BYTE**)(self + 0x14);
     ReadBloomSettings();
+    PhotoDofSwitch();
     if (g_cfg.log && params) {
         static unsigned calls;
         if (calls++ % 600 == 0) {
@@ -162,9 +165,11 @@ static void __fastcall Hook_BloomRender(BYTE* self, void*, void* a, void* b, voi
     for (int i = 0; i < 4; i++) {
         float* v = (float*)(params + kBloomOffsets[i]);
         stock[i] = *v;
-        *v = stock[i] * s_bloomScale[i];
+        *v = stock[i] * s_bloomScale[i] * (i == 0 ? g_photoBloom : i == 3 ? g_photoExposure : 1.0f);
     }
-    if (!g_cfg.bloom) params[0x38] = 0;
+    // photo mode: bloom down to 0 switches it off, any other value than 1 switches it on
+    if (g_photoBloom < 0.05f || (!g_cfg.bloom && g_photoBloom == 1.0f)) params[0x38] = 0;
+    else if (g_photoBloom != 1.0f) params[0x38] = 1;
     s_origBloom(self, a, b, c, d, e);
     for (int i = 0; i < 4; i++) *(float*)(params + kBloomOffsets[i]) = stock[i];
     params[0x38] = add;
@@ -206,6 +211,105 @@ void PatchBloomAndFlares()
             Log("particle flares off");
         }
     }
+}
+
+float g_photoBloom = 1.0f, g_photoExposure = 1.0f, g_photoDof = 0.0f, g_photoFocus = 15.0f;
+
+// Depth of field (cDepthOfFieldEffect, render 0xADFE60 through its vtable slot 0xC645F8, same calling
+// convention). It runs while its parameter block [this+4] has +8 set; the block holds the four focus
+// distances in metres at +0x1B4 (blurred in front up to there, sharp from +0x1B8 to +0x1BC, blurred
+// again from +0x1C0), the blend amount at +0x1C4 and the blur kernel from +0x10, which the game's own
+// 0xADF430 (thiscall, the blur amount) fills. The post processing settings (0x48D8F0, "/DoF/a; Enabled"
+// and so on) leave it off during races, and the chain (0x493BF0: bloom, colour cube, depth of field,
+// ..., motion blur) only calls a pass whose +8 is set. So in photo mode the bloom hook, which the chain
+// calls just before, sets +8 of the depth of field block (post processing manager [[0xD714D0]+0x120],
+// its chain at +0xB50, the pass at chain+4, its block at pass+4); the hook fills the block for the call
+// and puts all of the game's values back after it.
+static BYTE* const kDofRender = (BYTE*)0x00ADFE60;
+static void** const kDofSlot = (void**)0x00C645F8;
+typedef void(__thiscall* DofSetBlur_t)(void* params, float amount);
+static const DofSetBlur_t kDofSetBlur = (DofSetBlur_t)0x00ADF430;
+static MotionBlurRender_t s_origDof;
+static BYTE* s_dofSwitched;  // the block whose +8 the bloom hook set, with the game's value
+static BYTE s_dofWas;
+
+static bool PhotoDofWanted() { return g_photoDof > 0.0f && s_origDof && *(int*)0x00D0F7E8 != 0; }
+
+static BYTE* DofParams()
+{
+    __try {
+        BYTE* pp = *(BYTE**)0x00D714D0;
+        BYTE* mgr = pp ? *(BYTE**)(pp + 0x120) : NULL;
+        BYTE* chain = mgr ? *(BYTE**)(mgr + 0xB50) : NULL;
+        BYTE* pass = chain ? *(BYTE**)(chain + 4) : NULL;
+        if (!pass || *(DWORD*)pass != 0x00C645F0) return NULL;
+        return *(BYTE**)(pass + 4);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return NULL;
+    }
+}
+
+static void PhotoDofSwitch()
+{
+    if (s_dofSwitched) {  // the pass did not run last time
+        s_dofSwitched[8] = s_dofWas;
+        s_dofSwitched = NULL;
+    }
+    if (!PhotoDofWanted()) return;
+    BYTE* params = DofParams();
+    if (!params || !*(void**)(params + 0x1CC)) {
+        static bool logged;
+        if (!logged) Log("depth of field: pass %s", params ? "has no view" : "not found");
+        logged = true;
+        return;
+    }
+    s_dofSwitched = params;
+    s_dofWas = params[8];
+    params[8] = 1;
+}
+
+static void __fastcall Hook_DofRender(BYTE* self, void*, void* a, void* b, void* c, void* d, void* e)
+{
+    BYTE* params = *(BYTE**)(self + 4);
+    // not at the lowest graphics quality, where the game never runs it
+    if (!PhotoDofWanted() || !params || !*(void**)(params + 0x1CC)) {
+        s_origDof(self, a, b, c, d, e);
+        if (params && params == s_dofSwitched) params[8] = s_dofWas;
+        s_dofSwitched = NULL;
+        return;
+    }
+    static BYTE saved[0x1C8];
+    memcpy(saved, params + 8, sizeof(saved) - 8);
+    float f = g_photoFocus;
+    params[8] = 1;
+    kDofSetBlur(params, 1.0f + 5.0f * g_photoDof);
+    float* p = (float*)(params + 0x1B4);
+    p[0] = f * 0.4f;
+    p[1] = f * 0.85f;
+    p[2] = f * 1.2f;
+    p[3] = f * 3.0f;
+    p[4] = g_photoDof;
+    p[5] = 0.0f;
+    static bool logged;
+    if (!logged) Log("depth of field: on for the photo mode");
+    logged = true;
+    s_origDof(self, a, b, c, d, e);
+    memcpy(params + 8, saved, sizeof(saved) - 8);
+    if (params == s_dofSwitched) params[8] = s_dofWas;
+    s_dofSwitched = NULL;
+}
+
+void PatchDepthOfField()
+{
+    if (!g_cfg.photoMode) return;
+    if (memcmp(kDofRender, "\x56\x8B\xF1\x8B\x46\x04\x80\x78\x08\x00", 10) || *kDofSlot != kDofRender) {
+        Log("depth of field pass not recognised");
+        return;
+    }
+    s_origDof = (MotionBlurRender_t)kDofRender;
+    void* hook = (void*)Hook_DofRender;
+    WriteMemory(kDofSlot, &hook, sizeof(hook));
+    Log("depth of field pass hooked (photo mode)");
 }
 
 // Lens flares: the screen space lens flare pass (0x499FB0) only runs while the tweakable

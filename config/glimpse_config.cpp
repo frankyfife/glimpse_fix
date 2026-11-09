@@ -81,7 +81,7 @@ static Option kOptions[] = {
     { "Camera", "ZoomInKey", CHOICE, "  Zoom in", "Key held to zoom closer.", "0x31", KEY_CHOICES },
     { "Camera", "ZoomOutKey", CHOICE, "  Zoom out", "Key held to zoom wider.", "0x32", KEY_CHOICES },
     { "Camera", "ZoomResetKey", CHOICE, "  Zoom reset", "Back to the field of view above.", "0x33", KEY_CHOICES },
-    { "Camera", "PhotoMode", BOOL_OPT, "Photo mode", "During a race the key or the pad's Back button holds the world still, hides the HUD and frees the camera. Sticks or W A S D and I J K L to move and look, triggers or Q E down and up, Y + LB RB or U O to tilt.", "0" },
+    { "Camera", "PhotoMode", BOOL_OPT, "Photo mode", "!During a race the key or Back holds the world still, hides the HUD and frees the camera: sticks or W A S D / I J K L move and look, triggers or Q E down and up, Y + LB RB or U O tilt. D-pad or arrows: focus and depth of field, with X or Ctrl bloom and exposure. Once your car is wrecked the crash sequence decides the view: tied to the car on the road, not free at all after leaving the track.", "0" },
     { "Camera", "PhotoModeKey", CHOICE, "  Photo mode key", "Keys the game uses itself (Esc, P, Enter, arrows) do not work here.", "0x46", KEY_CHOICES },
     { "Camera", "HudKey", CHOICE, "HUD on/off key", "Switch the HUD off and on during a race.", "0", "0|None;" KEY_CHOICES },
     // Gameplay
@@ -89,6 +89,7 @@ static Option kOptions[] = {
     { "Gameplay", "BonusContent", BOOL_OPT, "Bonus content", "The PC version's cheat code extras: Expressway track, Cobretti SlipStream, branded cars, Euro livery.", "0" },
     { "Gameplay", "UnlockDecals", CHOICE, "Achievements and decals", "Unlocked in the next single player race and saved with the profile (backed up to glimpse_backup first). Unobtainable = the six ranked online ones and the Pure decal.", "0", "0|As the game;2|Unobtainable only;1|All" },
     { "Gameplay", "SkipIntro", CHOICE, "Boot movies", "Skip the movies at every start. The files stay untouched.", "0", "0|Play both;1|Skip the logo;2|Skip logo and intro" },
+    { "Gameplay", "WreckTime", CHOICE, "Time until the respot (experimental)", "!Highly experimental: can softlock the game, especially together with the photo mode. How long after a wreck of yours (crashes, takedowns, power plays) the game puts your car back on the track.", "0", "0|As the game (3 s);5|5 s;8|8 s;10|10 s;15|15 s;20|20 s;30|30 s;60|60 s" },
     { "Gameplay", "Boost", BOOL_OPT, "Boost (hold X)", "Your car surges forward while X or the boost key is held, with more motion blur.", "0" },
     { "Gameplay", "BoostKey", CHOICE, "  Boost key", "Keyboard key held for the boost, like X on the pad. Left Shift is not used by the game.", "0xA0", "0|None;" KEY_CHOICES },
     { "Gameplay", "BoostAcceleration", RANGE, "  Boost acceleration", "m/s per second; 15 is about 1.5 g. Also used by the AI boost.", "15", 0, 1, 60, 1, 0 },
@@ -231,12 +232,14 @@ static void SetValue(const Option& o, const std::string& v)
 // dark theme: the controls are drawn here; the lists open as popup menus in Windows' dark menu style
 static const COLORREF kBack = RGB(24, 25, 28), kSide = RGB(32, 33, 38), kSideSel = RGB(46, 48, 55),
                       kField = RGB(48, 50, 57), kBorder = RGB(66, 69, 78), kText = RGB(232, 233, 236),
-                      kDim = RGB(150, 154, 163), kOff = RGB(88, 91, 99), kAccent = RGB(255, 120, 20);
+                      kDim = RGB(150, 154, 163), kOff = RGB(88, 91, 99), kAccent = RGB(255, 120, 20),
+                      kWarn = RGB(255, 85, 75);
 static HBRUSH s_backBrush, s_sideBrush, s_fieldBrush;
 static HFONT s_font, s_fontBold, s_fontTitle, s_fontBrand, s_fontSmall;
 
 enum Role { R_NONE, R_LABEL, R_VALUE, R_DIM, R_TITLE, R_BRAND, R_SIDEDIM, R_NAV, R_PRESET, R_ACTION, R_TOGGLE, R_SELECT };
 
+static bool s_infoWarn;  // the help text shown is a warning
 static HWND s_wnd, s_status, s_info, s_title, s_subtitle, s_nav[kPageCount], s_preset[3];
 static int s_dpi = 96;
 static int s_page;
@@ -501,7 +504,9 @@ static void ShowPage(int page)
         ShowWindow(o.ctrl, cmd);
         if (o.value) ShowWindow(o.value, cmd);
     }
+    s_infoWarn = false;
     SetWindowTextA(s_info, "Point at an option to see what it does. Every change is saved at once.");
+    InvalidateRect(s_info, NULL, TRUE);
     for (int i = 0; i < kPageCount; i++) InvalidateRect(s_nav[i], NULL, TRUE);
 }
 
@@ -603,7 +608,7 @@ static void CreateControls()
             o.value = Child("STATIC", "", SS_LEFT | SS_CENTERIMAGE, S(ctrlX) + S(200), y, S(140), S(26), 0, R_VALUE, s_font);
         }
     }
-    s_info = Child("STATIC", "", WS_VISIBLE | SS_LEFT, S(kContentX), S(kHeight - 104), S(kWidth - kContentX - 24), S(42), 0,
+    s_info = Child("STATIC", "", WS_VISIBLE | SS_LEFT, S(kContentX), S(kHeight - 122), S(kWidth - kContentX - 24), S(72), 0,
                    R_DIM, s_font);
     s_status = Child("STATIC", "", WS_VISIBLE | SS_LEFT | SS_PATHELLIPSIS | SS_CENTERIMAGE, S(kContentX), S(kHeight - 46),
                      S(kWidth - 400 - kContentX), S(30), 0, R_DIM, s_fontSmall);
@@ -885,7 +890,10 @@ static void ShowHelpFor(HWND hwnd)
     last = hwnd;
     for (Option& o : kOptions)
         if (hwnd == o.ctrl || hwnd == o.label || hwnd == o.value) {
-            SetWindowTextA(s_info, o.help);
+            // a help text starting with '!' is a warning, shown in red
+            s_infoWarn = o.help[0] == '!';
+            SetWindowTextA(s_info, o.help + s_infoWarn);
+            InvalidateRect(s_info, NULL, TRUE);
             return;
         }
 }
@@ -899,7 +907,7 @@ static LRESULT CALLBACK WndProc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
         FillRect((HDC)wp, &r, s_backBrush);
         RECT side = { 0, 0, S(kSideW), r.bottom };
         FillRect((HDC)wp, &side, s_sideBrush);
-        RECT sep = { S(kContentX), S(kHeight - 116), r.right - S(24), S(kHeight - 115) };
+        RECT sep = { S(kContentX), S(kHeight - 130), r.right - S(24), S(kHeight - 129) };
         HBRUSH b = CreateSolidBrush(kBorder);
         FillRect((HDC)wp, &sep, b);
         DeleteObject(b);
@@ -969,6 +977,7 @@ static LRESULT CALLBACK WndProc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
         SetBkMode(dc, TRANSPARENT);
         COLORREF col = kText;
         if (role == R_BRAND) col = kAccent;
+        else if (c == s_info && s_infoWarn) col = kWarn;
         else if (role == R_DIM || role == R_SIDEDIM) col = kDim;
         else if (role == R_VALUE) col = IsWindowEnabled(c) ? kAccent : kOff;
         else if (role == R_LABEL) col = IsWindowEnabled(c) ? kText : kOff;

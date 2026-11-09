@@ -21,14 +21,23 @@
 //
 // Photo mode, during a race: the game's slow motion tweakables, "Physics/Change Phys dt/Slow motion
 // activated" (0xD71208) and "Slow Motion cheat speed" (0xD113B8, scales the simulation step), hold
-// the world almost still (speed 0.0001) while the cameras keep running in real time. The race camera's
+// the world still (speed 0.000001) while the cameras keep running in real time. The race camera's
 // state then gets a free position and direction (the same hook as the FOV), and the HUD's two render
 // tweakables, "UI/HUD/3D Components/Render Powerbar" (0xD1BC94) and "Render Infobar" (0xD1BC9C), are
-// switched off. The race messages and power play prompts are Scaleform, player 1's HUD movie
-// Resident|UI/HUD/Hud.gfx: UI layer 0x3B (created at 0x55A5A0), [[0xD64E0C]+8][0x3B], a HUD movie object
-// (vtable 0xBD0E1C) whose [+0x68]+4 is the GFx movie view; its _root._visible is set through the view's
-// own SetVariable, the way the prompt bar icons are set (game.cpp). The pad drives the camera and the game sees it idle, and the game's sound is paused
+// switched off. The 2D overlays (race messages, power play prompts, timers and counters) are Scaleform
+// movies on the UI layers, [[0xD64E0C]+8][id] (Hud.gfx 0x3B, TimerOverlay.gfx 100, ..., created at
+// 0x55A5A0 and 0x462100); each layer's [+0x68]+4 is its GFx movie view, and every one that is shown is
+// hidden through the view's own SetVisible (GFxMovieRoot vtable 0xC41CF4, +0x20, with GetVisible at +0x24).
+// The pad drives the camera and the game sees it idle, and the game's sound is paused
 // (audio_diag.cpp). Leaving restores all of it.
+//
+// Crashes and takedowns: the director switches to other cameras then (cCrashCameraMode and others,
+// built from the Tripod camera classes), and it does so in real time, while the world is held still.
+// So the photo mode hooks those classes' update too (vtable slot 5 of each, the same as the race
+// cameras) and puts its pose on whichever camera runs; it keeps the FOV it started with. It may start
+// on such a camera within 15 s of a race camera, and ends when no camera runs any more, on Esc
+// (the pause menu) and when the game loses focus. Depth of field, bloom and exposure for the photo
+// are set in postfx.cpp, from the values LookPhoto keeps.
 #include "common.h"
 #include <math.h>
 #include <string.h>
@@ -55,7 +64,9 @@ static bool s_photo;              // on
 static bool s_photoPose;          // the free pose has been taken from the camera
 static float s_pos[3];
 static float s_axis[3][3];        // left, up, forward (the state's axes)
+static float s_photoFov;          // the FOV the photo mode started with
 static DWORD s_raceCamera;        // tick of the last race camera update (0: none yet)
+static DWORD s_anyCamera;         // tick of the last update of any hooked camera
 static BYTE s_slowOn;             // the slow motion tweakables before the photo mode
 static float s_slowSpeed;
 static bool s_padHeld;            // after the photo mode: the game sees the pad idle until it is let go
@@ -113,6 +124,17 @@ static void RestoreState(BYTE* self)
     r->state = NULL;
 }
 
+// +1 or -1: the sign of side . (up x forward), 0 for no usable axes
+static int s_raceHand;
+static int Handedness(const BYTE* state)
+{
+    const float* a = (const float*)(state + 0x14);
+    const float* u = (const float*)(state + 0x24);
+    const float* f = (const float*)(state + 0x34);
+    float d = a[0] * (u[1] * f[2] - u[2] * f[1]) + a[1] * (u[2] * f[0] - u[0] * f[2]) + a[2] * (u[0] * f[1] - u[1] * f[0]);
+    return d > 0.5f ? 1 : d < -0.5f ? -1 : 0;
+}
+
 static void ScaleFov(BYTE* state, float factor, bool ultrawide)
 {
     float* fov = (float*)(state + 0x44);
@@ -146,24 +168,41 @@ static void ScaleFov(BYTE* state, float factor, bool ultrawide)
     fov[1] *= f / stock;
 }
 
-// after the update: FOV of the race cameras, the free pose in photo mode
+// after the update: FOV of the race cameras, the free pose in photo mode (for every camera, so the
+// view stays put when the director switches to a crash camera)
 static void ChangeState(BYTE* self, bool raceCamera)
 {
     BYTE* state = State(self);
     if (!state) return;
     BYTE stock[kPoseLen];
     memcpy(stock, state + kPose, kPoseLen);
+    // which way the first axis points next to up and forward: the race cameras' is the photo mode's own
+    // (left), some crash cameras have it the other way round (right)
+    int hand = Handedness(state);
+    if (raceCamera && hand) s_raceHand = hand;
+    bool mirrored = hand && s_raceHand && hand != s_raceHand;
     if (raceCamera) ScaleFov(state, g_cfg.fov * s_zoom, true);
     if (s_photo) {
+        if (!raceCamera) ScaleFov(state, 1.0f, true);  // the ultrawide correction the race cameras already have
         float* pos = (float*)(state + 4);
+        float fov = *(float*)(state + 0x44);
         if (!s_photoPose) {
             memcpy(s_pos, pos, sizeof(s_pos));
             for (int i = 0; i < 3; i++) memcpy(s_axis[i], state + 0x14 + i * 0x10, sizeof(s_axis[i]));
+            if (mirrored)
+                for (int i = 0; i < 3; i++) s_axis[0][i] = -s_axis[0][i];
+            s_photoFov = fov;
             s_photoPose = true;
         }
+        static bool logged;
+        if (mirrored && !logged) Log("photo mode: a camera with its side axis to the right");
+        logged = logged || mirrored;
         memcpy(pos, s_pos, sizeof(s_pos));
         for (int i = 0; i < 3; i++) memcpy(state + 0x14 + i * 0x10, s_axis[i], sizeof(s_axis[i]));
-        ScaleFov(state, s_photoZoom, !raceCamera);
+        if (mirrored)
+            for (int i = 0; i < 3; i++) ((float*)(state + 0x14))[i] = -s_axis[0][i];
+        // the FOV the photo mode started with, whichever camera runs now
+        if (fov > 0.01f) ScaleFov(state, s_photoFov * s_photoZoom / fov, false);
     }
     if (!memcmp(stock, state + kPose, kPoseLen)) return;
     Saved* r = Record(state, true);
@@ -173,7 +212,7 @@ static void ChangeState(BYTE* self, bool raceCamera)
 
 static void __fastcall Hook_ChaseUpdate(BYTE* self, void*, void* frame)
 {
-    s_raceCamera = GetTickCount() | 1;
+    s_raceCamera = s_anyCamera = GetTickCount() | 1;
     RestoreState(self);
     s_origChase(self, frame);
     ChangeState(self, true);
@@ -181,11 +220,44 @@ static void __fastcall Hook_ChaseUpdate(BYTE* self, void*, void* frame)
 
 static void __fastcall Hook_BumperUpdate(BYTE* self, void*, void* frame)
 {
-    s_raceCamera = GetTickCount() | 1;
+    s_raceCamera = s_anyCamera = GetTickCount() | 1;
     RestoreState(self);
     s_origBumper(self, frame);
     ChangeState(self, true);
 }
+
+// the other camera classes (crash, takedown, replay and post race cameras are made of them), all with
+// the update in vtable slot 5 and the state at +4 (cCameraState, 0x74 bytes, the same layout); only the
+// photo mode changes their state
+struct OtherCamera { DWORD vtable; DWORD update; const char* prologue; int len; const char* name; };
+static const OtherCamera kOtherCameras[] = {
+    { 0x00C5B3DC, 0x00A92520, "\x81\xEC\x18\x01\x00\x00", 6, "bonnet" },
+    { 0x00C5B418, 0x00A93760, "\x81\xEC\xA8\x00\x00\x00", 6, "velocity based" },
+    { 0x00C535B0, 0x00A62540, "\x81\xEC\xB4\x00\x00\x00", 6, "free" },
+    { 0x00C535D8, 0x00A62E10, "\x83\xEC\x30\x56\x8B\xF1", 6, "fixed to world" },
+    { 0x00C53630, 0x00A630E0, "\x81\xEC\x94\x00\x00\x00", 6, "fixed to spline" },
+    { 0x00C53660, 0x00A63A40, "\x81\xEC\xEC\x00\x00\x00", 6, "fixed to subject" },
+    { 0x00C536EC, 0x00A643E0, "\x83\xB9\x2C\x01\x00\x00\x00", 7, "dynamic behaviour" },
+};
+enum { kOtherCount = sizeof(kOtherCameras) / sizeof(kOtherCameras[0]) };
+static CameraUpdate_t s_origOther[kOtherCount];
+static bool s_otherSeen[kOtherCount];  // logged in this photo mode
+
+template <int N> static void __fastcall Hook_OtherUpdate(BYTE* self, void*, void* frame)
+{
+    s_anyCamera = GetTickCount() | 1;
+    if (s_photo && !s_otherSeen[N]) {
+        s_otherSeen[N] = true;
+        Log("photo mode: %s camera runs", kOtherCameras[N].name);
+    }
+    RestoreState(self);
+    s_origOther[N](self, frame);
+    ChangeState(self, false);
+}
+static void* const kOtherHooks[kOtherCount] = {
+    (void*)Hook_OtherUpdate<0>, (void*)Hook_OtherUpdate<1>, (void*)Hook_OtherUpdate<2>, (void*)Hook_OtherUpdate<3>,
+    (void*)Hook_OtherUpdate<4>, (void*)Hook_OtherUpdate<5>, (void*)Hook_OtherUpdate<6>,
+};
 
 static bool HookSlot(void** slot, BYTE* fn, const char* prologue, int len, void* hook, void** orig)
 {
@@ -195,8 +267,66 @@ static bool HookSlot(void** slot, BYTE* fn, const char* prologue, int len, void*
     return true;
 }
 
+// Respot: every car's GameLogicNew::cRespot component (vtable 0xBA7C38) decides each frame in its update
+// (slot 4, 0x43C2E0, thiscall with the time step) whether the car is put back on the track: when it is
+// wrecked (state 1 of the player's race state, [[+0x30]+0xA4+[0xD02BB4]*4]+0x2C, +4) or forced by one of
+// many flags, and the wreck time or the crash flags have run out (0x43A420, 0x439D80). The crash camera
+// runs in real time, so the respot came while the world was held still. The hook leaves the update out:
+// in photo mode for every car, so wrecks stay where they are; with WreckTime for the human player
+// ([[+0x30]+0x80+[0xD02D78]*4]+0xC) until that many seconds after the wreck.
+static void** const kRespotUpdateSlot = (void**)(0x00BA7C38 + 0x10);
+static BYTE* const kRespotUpdate = (BYTE*)0x0043C2E0;
+typedef void(__thiscall* RespotUpdate_t)(void* self, float dt);
+static RespotUpdate_t s_origRespot;
+static DWORD s_wreckStart;  // tick when the player's car was wrecked (0: it is not)
+
+// the human player's car, wrecked: 1, not wrecked: 0, an AI car or unreadable: -1
+static int PlayerWrecked(BYTE* respot)
+{
+    __try {
+        BYTE* car = *(BYTE**)(respot + 0x30);
+        BYTE* who = *(BYTE**)(car + 0x80 + *(int*)0x00D02D78 * 4);
+        if (!who[0xC]) return -1;
+        BYTE* state = *(BYTE**)(*(BYTE**)(car + 0xA4 + *(int*)0x00D02BB4 * 4) + 0x2C);
+        return *(int*)(state + 4) == 1;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return -1;
+    }
+}
+
+static void __fastcall Hook_RespotUpdate(BYTE* self, void*, float dt)
+{
+    if (s_photo) {
+        static DWORD logged;
+        if (GetTickCount() - logged > 5000) Log("photo mode: respot held");
+        logged = GetTickCount();
+        return;
+    }
+    if (g_cfg.wreckTime > 0.0f) {
+        int wrecked = PlayerWrecked(self);
+        DWORD now = GetTickCount();
+        if (wrecked == 1) {
+            if (!s_wreckStart) {
+                s_wreckStart = now | 1;
+                Log("wreck: respot after %.0f s", g_cfg.wreckTime);
+            }
+            if (now - s_wreckStart < (DWORD)(g_cfg.wreckTime * 1000.0f)) return;
+        } else if (wrecked == 0) {
+            s_wreckStart = 0;
+        }
+    }
+    s_origRespot(self, dt);
+}
+
 void PatchCamera()
 {
+    if (g_cfg.photoMode || g_cfg.wreckTime > 0.0f) {
+        if (HookSlot(kRespotUpdateSlot, kRespotUpdate, "\xA0\xDC\x66\xD0\x00\x83\xEC\x14", 8, (void*)Hook_RespotUpdate,
+                     (void**)&s_origRespot))
+            Log("respot hooked (photo mode %d, wreck time %.0f s)", g_cfg.photoMode, g_cfg.wreckTime);
+        else
+            Log("respot not recognised");
+    }
     bool race = g_cfg.fov != 1.0f || g_cfg.ultrawideFix || g_cfg.zoomKeys || g_cfg.photoMode;
     if (race) {
         bool chase = HookSlot(kChaseUpdateSlot, kChaseUpdate, "\x81\xEC\x44\x01\x00\x00", 6, (void*)Hook_ChaseUpdate,
@@ -206,7 +336,18 @@ void PatchCamera()
         Log("camera fov: chase %s, bumper %s, factor %.2f, ultrawide %d, zoom keys %d", chase ? "hooked" : "not recognised",
             bumper ? "hooked" : "not recognised", g_cfg.fov, g_cfg.ultrawideFix, g_cfg.zoomKeys);
     }
-    if (g_cfg.photoMode) Log("photo mode: key 0x%02X and the pad's Back button during a race", g_cfg.photoModeKey);
+    if (g_cfg.photoMode) {
+        int hooked = 0;
+        for (int i = 0; i < kOtherCount; i++) {
+            const OtherCamera& c = kOtherCameras[i];
+            if (HookSlot((void**)(c.vtable + 0x14), (BYTE*)c.update, c.prologue, c.len, kOtherHooks[i], (void**)&s_origOther[i]))
+                hooked++;
+            else
+                Log("photo mode: %s camera not recognised", c.name);
+        }
+        Log("photo mode: key 0x%02X and the pad's Back button during a race, %d of %d other cameras hooked",
+            g_cfg.photoModeKey, hooked, (int)kOtherCount);
+    }
 }
 
 // the game sees the pad idle in photo mode and afterwards until it is let go
@@ -219,6 +360,18 @@ bool CameraBlocksPad()
 static bool InRace()
 {
     return s_raceCamera && GetTickCount() - (s_raceCamera & ~1u) < 500;
+}
+
+// some camera ran within the last half second, within 15 s of a race camera (a crash or
+// takedown camera during the race; the frontend's cameras come long after the race)
+static bool AnyCamera()
+{
+    return s_anyCamera && GetTickCount() - (s_anyCamera & ~1u) < 500;
+}
+
+static bool InRaceScene()
+{
+    return AnyCamera() && s_raceCamera && GetTickCount() - (s_raceCamera & ~1u) < 15000;
 }
 
 static bool GameHasFocus()
@@ -244,33 +397,45 @@ static void SetHud(bool visible)
     *kHudInfobar = visible;
 }
 
-static void* HudMovie()
+// the 2D overlays: every UI layer in [[0xD64E0C]+8][id] (+4 id, +0x68 holder whose +4 is the GFx movie
+// view, a GFxMovieRoot with vtable 0xC41CF4: +0x20 SetVisible(bool), +0x24 GetVisible(), both for _root)
+typedef void(__thiscall* GFxSetVisible_t)(void* movie, bool visible);
+typedef bool(__thiscall* GFxGetVisible_t)(void* movie);
+enum { kLayers = 0x80 };
+static void* const kMovieRootVtable = (void*)0x00C41CF4;
+static void* s_hiddenMovie[kLayers];  // the movies photo mode hid, shown again when it ends
+
+static void* LayerMovie(int id)
 {
     __try {
         BYTE* ui = *(BYTE**)0x00D64E0C;
         BYTE** slots = ui ? *(BYTE***)(ui + 8) : NULL;
-        BYTE* hud = slots ? slots[0x3B] : NULL;
-        if (!hud || *(DWORD*)hud != 0x00BD0E1C || *(int*)(hud + 4) != 0x3B) return NULL;
-        BYTE* holder = *(BYTE**)(hud + 0x68);
-        return holder ? *(void**)(holder + 4) : NULL;
+        BYTE* layer = slots ? slots[id] : NULL;
+        if (!layer || *(int*)(layer + 4) != id) return NULL;
+        BYTE* holder = *(BYTE**)(layer + 0x68);
+        void* movie = holder ? *(void**)(holder + 4) : NULL;
+        return movie && *(void**)movie == kMovieRootVtable ? movie : NULL;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return NULL;
     }
 }
 
-// the race messages and power play prompts (Hud.gfx)
-static void SetHudMessages(bool visible)
+// hides every overlay that is shown (again each frame, for overlays that come up during photo mode);
+// shows only those again that it hid
+static void SetOverlays(bool visible)
 {
-    void* movie = HudMovie();
-    if (!movie) {
-        Log("photo mode: HUD movie not found");
-        return;
+    for (int id = 0; id < kLayers; id++) {
+        void* movie = LayerMovie(id);
+        void** vt = movie ? *(void***)movie : NULL;
+        if (visible) {
+            if (movie && movie == s_hiddenMovie[id]) ((GFxSetVisible_t)vt[0x20 / 4])(movie, true);
+            s_hiddenMovie[id] = NULL;
+        } else if (movie && ((GFxGetVisible_t)vt[0x24 / 4])(movie)) {
+            ((GFxSetVisible_t)vt[0x20 / 4])(movie, false);
+            if (s_hiddenMovie[id] != movie) Log("photo mode: overlay layer 0x%02X hidden", id);
+            s_hiddenMovie[id] = movie;
+        }
     }
-    GFxSetVariable_t setVariable = (GFxSetVariable_t)(*(void***)movie)[0x2C / 4];
-    GFxValue value = {};
-    value.type = GFX_NUMBER;
-    value.num = visible ? 1.0 : 0.0;
-    setVariable(movie, "_root._visible", &value, 0);
 }
 
 static float Stick(SHORT v)
@@ -353,20 +518,76 @@ static void MovePhoto(float dt, const XINPUT_GAMEPAD& pad, bool padOk)
     s_photoZoom = s_photoZoom < 0.2f ? 0.2f : s_photoZoom > 3.0f ? 3.0f : s_photoZoom;
 }
 
+static float Clamp(float v, float lo, float hi) { return v < lo ? lo : v > hi ? hi : v; }
+
+// the look: d-pad / arrow keys up and down focus distance, left and right depth of field strength;
+// with X / Ctrl held up and down bloom, left and right exposure; left stick click / Backspace resets
+static void LookPhoto(float dt, const XINPUT_GAMEPAD& pad, bool padOk)
+{
+    float upDown = 0, leftRight = 0;
+    bool alt = false, reset = false;
+    if (padOk) {
+        upDown += !!(pad.wButtons & XINPUT_GAMEPAD_DPAD_UP) - !!(pad.wButtons & XINPUT_GAMEPAD_DPAD_DOWN);
+        leftRight += !!(pad.wButtons & XINPUT_GAMEPAD_DPAD_RIGHT) - !!(pad.wButtons & XINPUT_GAMEPAD_DPAD_LEFT);
+        alt = (pad.wButtons & XINPUT_GAMEPAD_X) != 0;
+        reset = (pad.wButtons & XINPUT_GAMEPAD_LEFT_THUMB) != 0;
+    }
+    if (GameHasFocus()) {
+        upDown += KeyDown(VK_UP) - KeyDown(VK_DOWN);
+        leftRight += KeyDown(VK_RIGHT) - KeyDown(VK_LEFT);
+        alt = alt || KeyDown(VK_CONTROL);
+        reset = reset || KeyDown(VK_BACK);
+    }
+    if (reset) {
+        g_photoBloom = g_photoExposure = 1.0f;
+        g_photoDof = 0.0f;
+        g_photoFocus = 15.0f;
+    } else if (alt) {
+        // bloom from 1 down to off (below a tenth) and up to 4 times, exposure a quarter to 4 times
+        if (upDown) {
+            float b = g_photoBloom < 0.1f ? 0.1f : g_photoBloom;
+            b = Clamp(b * expf(0.8f * upDown * dt), 0.0f, 4.0f);
+            g_photoBloom = upDown < 0 && b < 0.1f ? 0.0f : b;
+        }
+        g_photoExposure = Clamp(g_photoExposure * expf(0.5f * leftRight * dt), 0.25f, 4.0f);
+    } else {
+        g_photoFocus = Clamp(g_photoFocus * expf(0.8f * upDown * dt), 1.0f, 2000.0f);
+        if (upDown && g_photoDof <= 0.0f) g_photoDof = 0.5f;  // the focus only shows with depth of field
+        g_photoDof = Clamp(g_photoDof + 0.8f * leftRight * dt, 0.0f, 1.0f);
+    }
+    static float logged[4];
+    float now[4] = { g_photoFocus, g_photoDof, g_photoBloom, g_photoExposure };
+    if (!upDown && !leftRight && !reset && memcmp(now, logged, sizeof(now))) {
+        memcpy(logged, now, sizeof(now));
+        Log("photo look: focus %.1f m, depth of field %.2f, bloom %.2f, exposure %.2f", now[0], now[1], now[2], now[3]);
+    }
+}
+
 static void SetPhoto(bool on, const char* why)
 {
     if (on == s_photo) return;
     Log("photo mode %s (%s)", on ? "on" : "off", why);
     s_photo = on;
+    // the look stays for the next photo; outside the photo mode the game's own
+    static float look[4] = { 1.0f, 1.0f, 0.0f, 15.0f };
+    float* const values[4] = { &g_photoBloom, &g_photoExposure, &g_photoDof, &g_photoFocus };
+    for (int i = 0; i < 4; i++) {
+        if (on) *values[i] = look[i];
+        else {
+            look[i] = *values[i];
+            *values[i] = i < 2 ? 1.0f : i == 2 ? 0.0f : 15.0f;
+        }
+    }
     if (on) {
+        memset(s_otherSeen, 0, sizeof(s_otherSeen));
         s_photoPose = false;
         s_photoZoom = 1.0f;
         s_slowOn = *kSlowMotionOn;
         s_slowSpeed = *kSlowMotionSpeed;
-        *kSlowMotionSpeed = 0.0001f;
+        *kSlowMotionSpeed = 0.000001f;
         *kSlowMotionOn = 1;
         SetHud(false);
-        SetHudMessages(false);
+        SetOverlays(false);
         PauseGameSound(true);
     } else {
         *kSlowMotionOn = s_slowOn;
@@ -374,7 +595,7 @@ static void SetPhoto(bool on, const char* why)
         PauseGameSound(false);
         s_padHeld = true;
         SetHud(!s_hudHidden);
-        SetHudMessages(true);
+        SetOverlays(true);
     }
 }
 
@@ -400,14 +621,24 @@ void CameraTick()
     bool focus = GameHasFocus();
 
     if (g_cfg.photoMode) {
-        bool race = InRace();
-        static bool lastKey, lastBack, lastB;
+        // a race camera, or a crash camera in a race on a single screen
+        bool race = InRace() || (InRaceScene() && Viewports() < 2);
+        static bool lastKey, lastBack, lastB, lastEsc;
         bool key = Pressed(focus && KeyDown(g_cfg.photoModeKey), lastKey);
         bool back = Pressed(padOk && (pad.wButtons & XINPUT_GAMEPAD_BACK), lastBack);
         bool b = Pressed(padOk && (pad.wButtons & XINPUT_GAMEPAD_B), lastB);
+        // Esc opens the pause menu and the game may pause without focus: the photo mode ends first,
+        // so it does not hide the menu
+        bool esc = Pressed(focus && KeyDown(VK_ESCAPE), lastEsc);
         if (s_photo) {
-            if (key || back || b || !race) SetPhoto(false, key ? "key" : back ? "back" : b ? "b" : "race camera gone");
-            else MovePhoto(dt, pad, padOk);
+            const char* why = key ? "key" : back ? "back" : b ? "b" : esc ? "esc" : !focus ? "focus lost" :
+                              !AnyCamera() ? "cameras gone" : NULL;
+            if (why) SetPhoto(false, why);
+            else {
+                MovePhoto(dt, pad, padOk);
+                LookPhoto(dt, pad, padOk);
+                SetOverlays(false);
+            }
         } else if ((key || back) && race) {
             SetPhoto(true, key ? "key" : "back");
         }
