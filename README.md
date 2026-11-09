@@ -174,7 +174,8 @@ draw at once.
   16:9 again (single screen only).
 * **Zoom keys:** hold a key to zoom the race camera closer or wider, another one resets it.
 * **Photo mode:** during a race, a key or the pad's Back button holds the world still (the game's
-  own slow motion at 0.000001), hides the HUD and all on-screen messages and frees the camera: left
+  own slow motion at 0.000001), hides the HUD and the on-screen messages (the power play icons in
+  the world stay) and frees the camera: left
   stick or W A S D to move, right stick or I J K L to look, the triggers or Q E down and up, A or
   Shift faster, LB RB or the zoom keys to zoom, Y + LB RB or U O to tilt. The d-pad or the arrow
   keys set the look: up and down the focus distance (it switches the depth of field on at half
