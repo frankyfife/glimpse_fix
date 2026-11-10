@@ -127,14 +127,19 @@ static float s_bloomScale[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
 static void ReadBloomSettings()
 {
     static DWORD last;
+    static FILETIME written;
     DWORD now = GetTickCount();
     if (last && now - last < 2000) return;
     last = now;
     char ini[MAX_PATH], buf[32];
     ModulePath(ini, "SplitSecondPad.ini");
+    // only when the file changed
+    WIN32_FILE_ATTRIBUTE_DATA fa;
+    if (!GetFileAttributesExA(ini, GetFileExInfoStandard, &fa) || !CompareFileTime(&fa.ftLastWriteTime, &written)) return;
+    written = fa.ftLastWriteTime;
     for (int i = 0; i < 4; i++) {
         GetPrivateProfileStringA("Graphics", kBloomKeys[i], "1.0", buf, sizeof(buf), ini);
-        float v = (float)atof(buf);
+        float v = buf[0] ? (float)atof(buf) : 1.0f;  // an empty value is the default, not 0
         v = v < 0.0f ? 0.0f : v > 10.0f ? 10.0f : v;
         if (v != s_bloomScale[i]) Log("%s %.2f", kBloomKeys[i], v);
         s_bloomScale[i] = v;
@@ -278,8 +283,8 @@ static void __fastcall Hook_DofRender(BYTE* self, void*, void* a, void* b, void*
         s_dofSwitched = NULL;
         return;
     }
-    static BYTE saved[0x1C8];
-    memcpy(saved, params + 8, sizeof(saved) - 8);
+    static BYTE saved[0x1C4];  // +8 to +0x1CB, all that is written below (the view at +0x1CC stays)
+    memcpy(saved, params + 8, sizeof(saved));
     float f = g_photoFocus;
     params[8] = 1;
     kDofSetBlur(params, 1.0f + 5.0f * g_photoDof);
@@ -294,7 +299,7 @@ static void __fastcall Hook_DofRender(BYTE* self, void*, void* a, void* b, void*
     if (!logged) Log("depth of field: on for the photo mode");
     logged = true;
     s_origDof(self, a, b, c, d, e);
-    memcpy(params + 8, saved, sizeof(saved) - 8);
+    memcpy(params + 8, saved, sizeof(saved));
     if (params == s_dofSwitched) params[8] = s_dofWas;
     s_dofSwitched = NULL;
 }

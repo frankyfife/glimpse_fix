@@ -216,7 +216,8 @@ void BoostTick()
     lastTick = now;
     if (dt > 0.1f) dt = 0.1f;
 
-    WORD buttons = PadButtons() | KeyButtons();
+    // the photo mode drives the camera with the pad, Shift and Ctrl: no boost or power bar meanwhile
+    WORD buttons = CameraBlocksPad() ? 0 : PadButtons() | KeyButtons();
     WORD pressed = buttons & ~lastButtons;
     lastButtons = buttons;
     bool boosting = false;

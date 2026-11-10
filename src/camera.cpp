@@ -35,9 +35,10 @@
 // built from the Tripod camera classes), and it does so in real time, while the world is held still.
 // So the photo mode hooks those classes' update too (vtable slot 5 of each, the same as the race
 // cameras) and puts its pose on whichever camera runs; it keeps the FOV it started with. It may start
-// on such a camera within 15 s of a race camera, and ends when no camera runs any more, on Esc
-// (the pause menu) and when the game loses focus. Depth of field, bloom and exposure for the photo
-// are set in postfx.cpp, from the values LookPhoto keeps.
+// on such a camera while a car is wrecked, within 15 s of a race camera, and ends when no camera runs
+// any more, on Esc (the pause menu) and when the game loses focus. Depth of field, bloom and exposure
+// for the photo are set in postfx.cpp, from the values LookPhoto keeps. Once the player's car is
+// wrecked the crash sequence decides the view (see README, Known limitations).
 #include "common.h"
 #include <math.h>
 #include <string.h>
@@ -278,43 +279,59 @@ static void** const kRespotUpdateSlot = (void**)(0x00BA7C38 + 0x10);
 static BYTE* const kRespotUpdate = (BYTE*)0x0043C2E0;
 typedef void(__thiscall* RespotUpdate_t)(void* self, float dt);
 static RespotUpdate_t s_origRespot;
-static DWORD s_wreckStart;  // tick when the player's car was wrecked (0: it is not)
+static DWORD s_wreckSeen;  // tick when a wrecked car was last seen (crash and takedown cameras run then)
 
-// the human player's car, wrecked: 1, not wrecked: 0, an AI car or unreadable: -1
-static int PlayerWrecked(BYTE* respot)
+// a car's race state (0 racing, 1 wrecked, 2 being respotted, -1 unreadable) and whether a human drives it
+static int RaceState(BYTE* respot, bool* human)
 {
     __try {
         BYTE* car = *(BYTE**)(respot + 0x30);
         BYTE* who = *(BYTE**)(car + 0x80 + *(int*)0x00D02D78 * 4);
-        if (!who[0xC]) return -1;
+        *human = who[0xC] != 0;
         BYTE* state = *(BYTE**)(*(BYTE**)(car + 0xA4 + *(int*)0x00D02BB4 * 4) + 0x2C);
-        return *(int*)(state + 4) == 1;
+        return *(int*)(state + 4);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return -1;
     }
 }
 
+// WreckTime: when each human player's car was wrecked
+static bool HoldRespot(BYTE* respot, int state)
+{
+    static struct { BYTE* respot; DWORD start; } wrecks[4];
+    DWORD now = GetTickCount();
+    int i = 0;
+    while (i < 4 && wrecks[i].respot != respot) i++;  // this car's entry
+    if (i == 4) {
+        if (state != 1) return false;
+        for (i = 0; i < 4 && wrecks[i].respot; i++) {  // else a free one
+        }
+        if (i == 4) i = (int)((UINT_PTR)respot / 16 % 4);  // full: reuse one
+    }
+    if (state != 1) {
+        if (wrecks[i].respot == respot) wrecks[i].respot = NULL;
+        return false;
+    }
+    if (wrecks[i].respot != respot) {
+        wrecks[i].respot = respot;
+        wrecks[i].start = now;
+        Log("wreck: respot after %.0f s", g_cfg.wreckTime);
+    }
+    return now - wrecks[i].start < (DWORD)(g_cfg.wreckTime * 1000.0f);
+}
+
 static void __fastcall Hook_RespotUpdate(BYTE* self, void*, float dt)
 {
+    bool human = false;
+    int state = RaceState(self, &human);
+    if (state == 1 || state == 2) s_wreckSeen = GetTickCount() | 1;
     if (s_photo) {
         static DWORD logged;
         if (GetTickCount() - logged > 5000) Log("photo mode: respot held");
         logged = GetTickCount();
         return;
     }
-    if (g_cfg.wreckTime > 0.0f) {
-        int wrecked = PlayerWrecked(self);
-        DWORD now = GetTickCount();
-        if (wrecked == 1) {
-            if (!s_wreckStart) {
-                s_wreckStart = now | 1;
-                Log("wreck: respot after %.0f s", g_cfg.wreckTime);
-            }
-            if (now - s_wreckStart < (DWORD)(g_cfg.wreckTime * 1000.0f)) return;
-        } else if (wrecked == 0) {
-            s_wreckStart = 0;
-        }
-    }
+    if (g_cfg.wreckTime > 0.0f && human && state >= 0 && HoldRespot(self, state)) return;
     s_origRespot(self, dt);
 }
 
@@ -327,7 +344,8 @@ void PatchCamera()
         else
             Log("respot not recognised");
     }
-    bool race = g_cfg.fov != 1.0f || g_cfg.ultrawideFix || g_cfg.zoomKeys || g_cfg.photoMode;
+    // the race cameras also tell UnlockDecals that a single player race runs (SinglePlayerRace)
+    bool race = g_cfg.fov != 1.0f || g_cfg.ultrawideFix || g_cfg.zoomKeys || g_cfg.photoMode || g_cfg.unlockDecals;
     if (race) {
         bool chase = HookSlot(kChaseUpdateSlot, kChaseUpdate, "\x81\xEC\x44\x01\x00\x00", 6, (void*)Hook_ChaseUpdate,
                               (void**)&s_origChase);
@@ -362,8 +380,9 @@ static bool InRace()
     return s_raceCamera && GetTickCount() - (s_raceCamera & ~1u) < 500;
 }
 
-// some camera ran within the last half second, within 15 s of a race camera (a crash or
-// takedown camera during the race; the frontend's cameras come long after the race)
+// some camera ran within the last half second while a car is wrecked, within 15 s of a race camera
+// (a crash or takedown camera during the race, not the cameras of the pause menu, the finish or the
+// frontend)
 static bool AnyCamera()
 {
     return s_anyCamera && GetTickCount() - (s_anyCamera & ~1u) < 500;
@@ -371,7 +390,9 @@ static bool AnyCamera()
 
 static bool InRaceScene()
 {
-    return AnyCamera() && s_raceCamera && GetTickCount() - (s_raceCamera & ~1u) < 15000;
+    DWORD now = GetTickCount();
+    return AnyCamera() && s_raceCamera && now - (s_raceCamera & ~1u) < 15000 && s_wreckSeen &&
+           now - (s_wreckSeen & ~1u) < 1000;
 }
 
 static bool GameHasFocus()
@@ -621,8 +642,8 @@ void CameraTick()
     bool focus = GameHasFocus();
 
     if (g_cfg.photoMode) {
-        // a race camera, or a crash camera in a race on a single screen
-        bool race = InRace() || (InRaceScene() && Viewports() < 2);
+        // a race camera or a crash camera, on a single screen (player 1 only)
+        bool race = (InRace() || InRaceScene()) && Viewports() < 2;
         static bool lastKey, lastBack, lastB, lastEsc;
         bool key = Pressed(focus && KeyDown(g_cfg.photoModeKey), lastKey);
         bool back = Pressed(padOk && (pad.wButtons & XINPUT_GAMEPAD_BACK), lastBack);

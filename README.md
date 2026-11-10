@@ -271,7 +271,7 @@ problems without it before reporting them.
 ## Settings
 
 `glimpse_config.exe` edits `SplitSecondPad.ini` next to it (or one picked with *Open INI...*): one
-tab per section (the AI boost on a page of its own), checkboxes, sliders and lists, a tooltip with the details on every option, and
+tab per section (the AI boost on a page of its own), checkboxes, sliders and lists, a help line with the details of the option under the mouse (warnings in red), and
 three presets (*Recommended*, *Original game*, *Chaos*). Options that depend on another one are
 greyed out while it is off. Every change is saved at once; bloom and exposure apply while the game
 runs, everything else at the next start. Only values are changed, so comments, order and keys the
@@ -286,7 +286,7 @@ The file is split into sections. INIs from older versions with everything under 
 
 | Key | Default | Meaning |
 |---|---|---|
-| `VirtualPads` | 4 | XInput slots exposed as pads (0–4). The game accepts at most 4 joysticks; lower this to make room for a wheel. |
+| `VirtualPads` | 4 | XInput slots exposed as pads (0–4). The game accepts at most 4 joysticks; lower this to make room for a wheel. At 0 the per-frame extras (photo mode, HUD and zoom keys, unlocks, decals, boost, LOD scaling, `PopInFix`, `LensFlare=0`) do not run, as they run with the pads' poll. |
 | `HideXInputFromDirectInput` | 1 | Don't offer the real XInput devices through DirectInput as well. |
 | `SeparateTriggers` | 1 | 0 = stock shared Z axis. |
 | `StickDeadzone` | 0.15 | Radial stick deadzone (0–1). |
@@ -327,7 +327,7 @@ The file is split into sections. INIs from older versions with everything under 
 | `ZoomKeys` | 0 | 1 = zoom the race camera while `ZoomInKey` / `ZoomOutKey` is held, `ZoomResetKey` back to `FOV`. |
 | `ZoomInKey`, `ZoomOutKey`, `ZoomResetKey` | 0x31, 0x32, 0x33 | Virtual key codes (1, 2, 3 on the top row). |
 | `PhotoMode` | 0 | 1 = photo mode with `PhotoModeKey` or the pad's Back button during a race. |
-| `PhotoModeKey` | 0x46 | Virtual key code (F). Keys the game uses itself (Esc, P, Enter, arrows) do not work. |
+| `PhotoModeKey` | 0x46 | Virtual key code (F). Keys the game uses itself (Esc, P, Enter, arrows) do not work, nor do the photo mode's own controls (W A S D, I J K L, Q E, U O, Shift, Ctrl, the zoom keys). |
 | `HudKey` | 0 | Virtual key code that switches the HUD off and on during a race (0x48 = H). 0 = no key. |
 
 **[Gameplay]**
@@ -369,7 +369,9 @@ The file is split into sections. INIs from older versions with everything under 
 * `RenderScale` other than `auto` patches code in the render target and HUD setup (nine places),
   the only option that changes game code. Leave it at `auto` if the game hangs after a few
   minutes with it set.
-* Boost, the power bar fill, the photo mode and the HUD key work for player 1 only.
+* Boost, the power bar fill, the photo mode and the HUD key work for player 1 only; the photo mode
+  only on a single screen.
+* With `VirtualPads=0` the per-frame extras do not run (see `VirtualPads`).
 * Photo mode on crashes: once your car is wrecked, the game's crash sequence decides the view.
   On a crash on the road (walls, other cars, power plays) the photo camera stays tied to the car
   and is not fully free. After leaving the track (falls) the game holds a waiting view that no

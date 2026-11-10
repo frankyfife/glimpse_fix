@@ -44,10 +44,13 @@ struct Option {
 
 // keys for the camera and gameplay options, as virtual key codes (P is the game's own pause key)
 #define KEY_CHOICES "0x31|1;0x32|2;0x33|3;0x34|4;0x35|5;0x36|6;0x37|7;0x38|8;0x39|9;0x30|0;0x41|A;0x42|B;0x43|C;0x44|D;0x45|E;0x46|F;0x47|G;0x48|H;0x49|I;0x4A|J;0x4B|K;0x4C|L;0x4D|M;0x4E|N;0x4F|O;0x51|Q;0x52|R;0x53|S;0x54|T;0x55|U;0x56|V;0x57|W;0x58|X;0x59|Y;0x5A|Z;0x70|F1;0x71|F2;0x72|F3;0x73|F4;0x74|F5;0x75|F6;0x76|F7;0x77|F8;0x78|F9;0x79|F10;0x7A|F11;0x7B|F12;0xA0|Left Shift;0xA2|Left Ctrl;0x20|Space;0x2D|Insert;0x2E|Delete;0x24|Home;0x21|Page Up;0x22|Page Down;0x60|Num 0;0x6E|Num ,;0x6B|Num +;0x6D|Num -"
+// the photo mode key: without the keys the photo mode itself uses (W A S D, I J K L, Q E, U O, Shift, Ctrl,
+// the default zoom keys 1 2 3)
+#define PHOTO_KEY_CHOICES "0x34|4;0x35|5;0x36|6;0x37|7;0x38|8;0x39|9;0x30|0;0x42|B;0x43|C;0x46|F;0x47|G;0x48|H;0x4D|M;0x4E|N;0x52|R;0x54|T;0x56|V;0x58|X;0x59|Y;0x5A|Z;0x70|F1;0x71|F2;0x72|F3;0x73|F4;0x74|F5;0x75|F6;0x76|F7;0x77|F8;0x78|F9;0x79|F10;0x7A|F11;0x7B|F12;0x20|Space;0x2D|Insert;0x2E|Delete;0x24|Home;0x21|Page Up;0x22|Page Down;0x60|Num 0;0x6E|Num ,;0x6B|Num +;0x6D|Num -"
 
 static Option kOptions[] = {
     // Controller
-    { "Controller", "VirtualPads", RANGE, "Virtual pads", "XInput slots presented to the game as Xbox 360 pads. The game takes at most 4 joysticks; lower this to make room for a wheel.", "4", 0, 0, 4, 1, 0 },
+    { "Controller", "VirtualPads", RANGE, "Virtual pads", "XInput slots presented to the game as Xbox 360 pads. The game takes at most 4 joysticks; lower this to make room for a wheel. At 0 the per-frame extras (photo mode, HUD and zoom keys, unlocks, boost) do not run.", "4", 0, 0, 4, 1, 0 },
     { "Controller", "HideXInputFromDirectInput", BOOL_OPT, "Hide the real pads from DirectInput", "Keeps XInput controllers from showing up twice.", "1" },
     { "Controller", "SeparateTriggers", BOOL_OPT, "Separate triggers", "LT and RT on their own axes, so you can brake and accelerate at the same time. Off = the stock shared axis.", "1" },
     { "Controller", "StickDeadzone", RANGE, "Stick deadzone", "Radial deadzone of the sticks.", "0.15", 0, 0, 0.5, 0.01, 2 },
@@ -65,7 +68,7 @@ static Option kOptions[] = {
     { "Graphics", "BloomStrength", RANGE, "  Bloom strength", "Glow on bright areas, on top of each camera's value. Applies while the game runs.", "1.0", 0, 0, 5, 0.05, 2 },
     { "Graphics", "BloomTone", RANGE, "  Bloom tone", "Second bright pass value, a softer effect. Applies while the game runs.", "1.0", 0, 0, 5, 0.05, 2 },
     { "Graphics", "BloomCurve", RANGE, "  Bloom curve", "How the glow is added; below 1.0 has no effect. Applies while the game runs.", "1.0", 0, 0, 5, 0.05, 2 },
-    { "Graphics", "Exposure", RANGE, "Exposure", "Brightness of the whole picture. Applies while the game runs.", "1.0", 0, 0, 3, 0.05, 2 },
+    { "Graphics", "Exposure", RANGE, "Exposure", "Brightness of the whole picture. Applies while the game runs.", "1.0", 0, 0.25, 3, 0.05, 2 },
     { "Graphics", "LensFlare", BOOL_OPT, "Lens flares", "Flares of the sun and lights, including the screen space flare.", "1" },
     { "Graphics", "ParticleFlare", BOOL_OPT, "Particle flares", "Flares of sparks, explosions and lights.", "1" },
     { "Graphics", "FixPowerplayIconSize", BOOL_OPT, "Power play icons at console size", "The PC port draws the power play icons and route markers too big above 1280 pixels width (3x at 4K).", "1" },
@@ -81,15 +84,15 @@ static Option kOptions[] = {
     { "Camera", "ZoomInKey", CHOICE, "  Zoom in", "Key held to zoom closer.", "0x31", KEY_CHOICES },
     { "Camera", "ZoomOutKey", CHOICE, "  Zoom out", "Key held to zoom wider.", "0x32", KEY_CHOICES },
     { "Camera", "ZoomResetKey", CHOICE, "  Zoom reset", "Back to the field of view above.", "0x33", KEY_CHOICES },
-    { "Camera", "PhotoMode", BOOL_OPT, "Photo mode", "!During a race the key or Back holds the world still, hides the HUD and frees the camera: sticks or W A S D / I J K L move and look, triggers or Q E down and up, Y + LB RB or U O tilt. D-pad or arrows: focus and depth of field, with X or Ctrl bloom and exposure. Once your car is wrecked the crash sequence decides the view: tied to the car on the road, not free at all after leaving the track.", "0" },
-    { "Camera", "PhotoModeKey", CHOICE, "  Photo mode key", "Keys the game uses itself (Esc, P, Enter, arrows) do not work here.", "0x46", KEY_CHOICES },
+    { "Camera", "PhotoMode", BOOL_OPT, "Photo mode", "!The key or Back holds the race still, hides the HUD and frees the camera: sticks or W A S D / I J K L move and look, triggers or Q E up and down, Y + LB RB or U O tilt; d-pad or arrows set focus and depth of field, with X or Ctrl bloom and exposure. Once your car is wrecked the crash sequence decides the view: tied to the car on the road, not free after leaving the track.", "0" },
+    { "Camera", "PhotoModeKey", CHOICE, "  Photo mode key", "Keys the game uses itself (Esc, P, Enter, arrows) and the photo mode's own controls are not offered.", "0x46", PHOTO_KEY_CHOICES },
     { "Camera", "HudKey", CHOICE, "HUD on/off key", "Switch the HUD off and on during a race.", "0", "0|None;" KEY_CHOICES },
     // Gameplay
     { "Gameplay", "UnlockAll", BOOL_OPT, "Everything unlocked", "All tracks, events, episodes, game modes and cars selectable. Your profile is not changed.", "0" },
     { "Gameplay", "BonusContent", BOOL_OPT, "Bonus content", "The PC version's cheat code extras: Expressway track, Cobretti SlipStream, branded cars, Euro livery.", "0" },
     { "Gameplay", "UnlockDecals", CHOICE, "Achievements and decals", "Unlocked in the next single player race and saved with the profile (backed up to glimpse_backup first). Unobtainable = the six ranked online ones and the Pure decal.", "0", "0|As the game;2|Unobtainable only;1|All" },
     { "Gameplay", "SkipIntro", CHOICE, "Boot movies", "Skip the movies at every start. The files stay untouched.", "0", "0|Play both;1|Skip the logo;2|Skip logo and intro" },
-    { "Gameplay", "WreckTime", CHOICE, "Time until the respot (experimental)", "!Highly experimental: can softlock the game, especially together with the photo mode. How long after a wreck of yours (crashes, takedowns, power plays) the game puts your car back on the track.", "0", "0|As the game (3 s);5|5 s;8|8 s;10|10 s;15|15 s;20|20 s;30|30 s;60|60 s" },
+    { "Gameplay", "WreckTime", CHOICE, "Time until the respot (experimental)", "!Highly experimental: can softlock the game, especially together with the photo mode. How long after a wreck of yours (crashes, takedowns, power plays) the game puts your car back on the track.", "0", "0|As the game;5|5 s;8|8 s;10|10 s;15|15 s;20|20 s;30|30 s;60|60 s" },
     { "Gameplay", "Boost", BOOL_OPT, "Boost (hold X)", "Your car surges forward while X or the boost key is held, with more motion blur.", "0" },
     { "Gameplay", "BoostKey", CHOICE, "  Boost key", "Keyboard key held for the boost, like X on the pad. Left Shift is not used by the game.", "0xA0", "0|None;" KEY_CHOICES },
     { "Gameplay", "BoostAcceleration", RANGE, "  Boost acceleration", "m/s per second; 15 is about 1.5 g. Also used by the AI boost.", "15", 0, 1, 60, 1, 0 },
@@ -158,14 +161,20 @@ static std::string BackupPath() { return std::string(s_path) + ".bak"; }
 
 static bool SaveLines(const char* path, const std::vector<std::string>& lines)
 {
-    FILE* f = fopen(path, "wb");
+    // written to a temporary file first and then put in place, so the game, which reads some values
+    // while it runs, never sees a half written INI
+    std::string tmp = std::string(path) + ".tmp";
+    FILE* f = fopen(tmp.c_str(), "wb");
     if (!f) return false;
+    bool ok = true;
     for (const std::string& l : lines) {
-        fputs(l.c_str(), f);
-        fputs(s_crlf ? "\r\n" : "\n", f);
+        ok = fputs(l.c_str(), f) >= 0 && ok;
+        ok = fputs(s_crlf ? "\r\n" : "\n", f) >= 0 && ok;
     }
-    fclose(f);
-    return true;
+    ok = fclose(f) == 0 && ok;
+    if (ok && MoveFileExA(tmp.c_str(), path, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) return true;
+    DeleteFileA(tmp.c_str());
+    return false;
 }
 
 static bool SaveIni()
@@ -189,7 +198,8 @@ static int FindKey(const char* section, const char* key, int* sectionEnd)
         if (t.empty() || t[0] == ';') continue;
         end = i + 1;
         size_t eq = t.find('=');
-        if (eq != std::string::npos && !_stricmp(Trim(t.substr(0, eq)).c_str(), key)) found = i;
+        // the first one, as Windows reads it
+        if (found < 0 && eq != std::string::npos && !_stricmp(Trim(t.substr(0, eq)).c_str(), key)) found = i;
     }
     if (sectionEnd) *sectionEnd = end;
     return found;

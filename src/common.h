@@ -34,7 +34,7 @@ struct Config {
     bool  popInFix;          // ignore the sectors' precomputed visibility lists (distance and frustum only)
     bool  unlockAll;         // all tracks, events, episodes, game modes and vehicles selectable
     bool  bonusContent;      // the PC cheat code extras: Expressway track, branded cars, liveries
-    float wreckTime;         // seconds from a wreck to the respot, 0 = the game's (3 s)
+    float wreckTime;         // seconds from a wreck to the respot, 0 = the game's
     int   unlockDecals;      // achievement decals: 0 off, 1 all, 2 only the online ones and the Pure decal (saved)
     bool  boost;             // X held: extra acceleration for player 1
     int   boostKey;          // virtual key that works like X for the boost, 0 = none
