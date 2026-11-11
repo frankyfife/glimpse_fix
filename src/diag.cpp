@@ -2,6 +2,7 @@
 // forced anisotropic filtering (Anisotropy=2..16), 60 fps pacing after Present (framerate.cpp)
 #include "common.h"
 #include <d3d9.h>
+#include <stdio.h>
 #include <string.h>
 
 typedef IDirect3D9*(WINAPI* Direct3DCreate9_t)(UINT);
@@ -184,6 +185,7 @@ static HRESULT STDMETHODCALLTYPE Diag_CreateDevice(IDirect3D9* d3d, UINT adapter
     Log("CreateDevice -> %08lx", hr);
     if (SUCCEEDED(hr) && out && *out) {
         Log("available texture memory %u MB", (*out)->GetAvailableTextureMem() >> 20);
+        LogForeignModules("after device");
         void** vt = *(void***)*out;
         if (g_cfg.log || g_cfg.frameRate == 60) PatchVtable(vt, 17, (void*)Diag_Present, (void**)&s_origPresent);
         s_device = *out;
@@ -217,8 +219,10 @@ static IDirect3D9* WINAPI Diag_Direct3DCreate9(UINT sdk)
             D3DADAPTER_IDENTIFIER9 id;
             D3DDISPLAYMODE dm;
             if (SUCCEEDED(d3d->GetAdapterIdentifier(a, 0, &id)) && SUCCEEDED(d3d->GetAdapterDisplayMode(a, &dm)))
-                Log("  adapter %u: %s %ux%u@%u modes=%u", a, id.Description, dm.Width, dm.Height, dm.RefreshRate,
-                    d3d->GetAdapterModeCount(a, D3DFMT_X8R8G8B8));
+                Log("  adapter %u: %s %ux%u@%u modes=%u, vendor %04lX device %04lX driver %u.%u.%u.%u", a, id.Description,
+                    dm.Width, dm.Height, dm.RefreshRate, d3d->GetAdapterModeCount(a, D3DFMT_X8R8G8B8), id.VendorId,
+                    id.DeviceId, HIWORD(id.DriverVersion.HighPart), LOWORD(id.DriverVersion.HighPart),
+                    HIWORD(id.DriverVersion.LowPart), LOWORD(id.DriverVersion.LowPart));
         }
     }
     return d3d;

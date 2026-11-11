@@ -169,6 +169,94 @@ static void ScaleFov(BYTE* state, float factor, bool ultrawide)
     fov[1] *= f / stock;
 }
 
+// Camera shake: the race cameras' own shake (bumps, collisions) shows in their rotation from frame to
+// frame. CameraShake below 1 passes the forward and up axis of the chase and bumper camera through a
+// low pass (time constant up to 0.12 s): quick shaking is filtered, turns follow with little delay.
+// It is applied after the game's update and taken back before the next one (RestoreState), like the
+// FOV, so the camera's own easing never sees it. A camera cut (a big jump or a pause) starts it anew.
+struct Smooth { BYTE* state; float fwd[3], up[3]; LONGLONG t; };
+static Smooth s_smooth[8];
+
+static void Norm3(float* v)
+{
+    float l = sqrtf(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+    if (l > 1e-6f) { v[0] /= l; v[1] /= l; v[2] /= l; }
+}
+
+static float Dot3(const float* a, const float* b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
+
+static void Cross3(const float* a, const float* b, float* out)
+{
+    out[0] = a[1] * b[2] - a[2] * b[1];
+    out[1] = a[2] * b[0] - a[0] * b[2];
+    out[2] = a[0] * b[1] - a[1] * b[0];
+}
+
+static void SmoothShake(BYTE* state)
+{
+    if (g_cfg.cameraShake >= 0.999f) return;
+    float tau = (1.0f - g_cfg.cameraShake) * 0.12f;
+    LARGE_INTEGER now, freq;
+    QueryPerformanceCounter(&now);
+    QueryPerformanceFrequency(&freq);
+    Smooth* s = NULL;
+    for (Smooth& e : s_smooth)
+        if (e.state == state) s = &e;
+    bool fresh = !s;
+    if (!s) {
+        s = &s_smooth[(DWORD)(UINT_PTR)state / 16 % 8];
+        s->state = state;
+    }
+    float* left = (float*)(state + 0x14);
+    float* up = (float*)(state + 0x24);
+    float* fwd = (float*)(state + 0x34);
+    float dt = fresh ? 1.0f : (float)(now.QuadPart - s->t) / freq.QuadPart;
+    s->t = now.QuadPart;
+    if (dt > 0.2f || Dot3(fwd, s->fwd) < 0.87f || Dot3(up, s->up) < 0.87f) {  // new, after a pause or a cut
+        memcpy(s->fwd, fwd, sizeof(s->fwd));
+        memcpy(s->up, up, sizeof(s->up));
+        return;
+    }
+    float a = 1.0f - expf(-dt / tau);
+    for (int i = 0; i < 3; i++) {
+        s->fwd[i] += (fwd[i] - s->fwd[i]) * a;
+        s->up[i] += (up[i] - s->up[i]) * a;
+    }
+    Norm3(s->fwd);
+    Norm3(s->up);
+    // square again, each axis on the side the game's own points to
+    float l[3], u[3];
+    Cross3(s->up, s->fwd, l);
+    Norm3(l);
+    if (Dot3(l, left) < 0) { l[0] = -l[0]; l[1] = -l[1]; l[2] = -l[2]; }
+    Cross3(s->fwd, l, u);
+    Norm3(u);
+    if (Dot3(u, up) < 0) { u[0] = -u[0]; u[1] = -u[1]; u[2] = -u[2]; }
+    memcpy(left, l, sizeof(l));
+    memcpy(up, u, sizeof(u));
+    memcpy(fwd, s->fwd, sizeof(s->fwd));
+}
+
+// ExplosionShakeOff=1: the game's own switch "AreaOfEffects/DebugTrigger/DisallowAllCameraShake"
+// (0xD8B4CC), which the camera shake controller (0x827FA0) checks to drop a running shake. Written only
+// when it is clear (levels may load it), not every frame; Log=1 counts how often the game clears it.
+void ApplyExplosionShake()
+{
+    BYTE* flag = (BYTE*)0x00D8B4CC;
+    static unsigned cleared;
+    static DWORD lastLog;
+    if (!*flag) {
+        *flag = 1;
+        cleared++;
+    }
+    DWORD now = GetTickCount();
+    if (g_cfg.log && now - lastLog > 10000) {
+        if (cleared) Log("explosion shake switch set %u times in %u s", cleared, lastLog ? (now - lastLog) / 1000 : 0);
+        cleared = 0;
+        lastLog = now;
+    }
+}
+
 // after the update: FOV of the race cameras, the free pose in photo mode (for every camera, so the
 // view stays put when the director switches to a crash camera)
 static void ChangeState(BYTE* self, bool raceCamera)
@@ -183,6 +271,7 @@ static void ChangeState(BYTE* self, bool raceCamera)
     if (raceCamera && hand) s_raceHand = hand;
     bool mirrored = hand && s_raceHand && hand != s_raceHand;
     if (raceCamera) ScaleFov(state, g_cfg.fov * s_zoom, true);
+    if (raceCamera && !s_photo) SmoothShake(state);
     if (s_photo) {
         if (!raceCamera) ScaleFov(state, 1.0f, true);  // the ultrawide correction the race cameras already have
         float* pos = (float*)(state + 4);
@@ -345,15 +434,17 @@ void PatchCamera()
             Log("respot not recognised");
     }
     // the race cameras also tell UnlockDecals that a single player race runs (SinglePlayerRace)
-    bool race = g_cfg.fov != 1.0f || g_cfg.ultrawideFix || g_cfg.zoomKeys || g_cfg.photoMode || g_cfg.unlockDecals;
+    bool race = g_cfg.fov != 1.0f || g_cfg.ultrawideFix || g_cfg.zoomKeys || g_cfg.photoMode || g_cfg.unlockDecals ||
+                g_cfg.cameraShake < 0.999f;
     if (race) {
         bool chase = HookSlot(kChaseUpdateSlot, kChaseUpdate, "\x81\xEC\x44\x01\x00\x00", 6, (void*)Hook_ChaseUpdate,
                               (void**)&s_origChase);
         bool bumper = HookSlot(kBumperUpdateSlot, kBumperUpdate, "\x81\xEC\xEC\x00\x00\x00", 6, (void*)Hook_BumperUpdate,
                                (void**)&s_origBumper);
-        Log("camera fov: chase %s, bumper %s, factor %.2f, ultrawide %d, zoom keys %d", chase ? "hooked" : "not recognised",
-            bumper ? "hooked" : "not recognised", g_cfg.fov, g_cfg.ultrawideFix, g_cfg.zoomKeys);
+        Log("camera fov: chase %s, bumper %s, factor %.2f, ultrawide %d, zoom keys %d, shake %.2f", chase ? "hooked" : "not recognised",
+            bumper ? "hooked" : "not recognised", g_cfg.fov, g_cfg.ultrawideFix, g_cfg.zoomKeys, g_cfg.cameraShake);
     }
+    if (g_cfg.explosionShakeOff) Log("explosion camera shake off");
     if (g_cfg.photoMode) {
         int hooked = 0;
         for (int i = 0; i < kOtherCount; i++) {

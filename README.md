@@ -160,8 +160,9 @@ draw at once.
   their vtable slots), the lens flares through the game's two enable tweakables.
 * **Anisotropic filtering:** the game filters all textures linearly; mipmapped textures that are
   not render targets get anisotropic filtering.
-* **RenderScale:** "Very High" is exactly "High" plus 2x supersampling. The factor can be set
-  independently of the quality option.
+* **Graphics quality:** "Very High" is exactly "High" plus 2x supersampling: of all places in the
+  game that read the quality level, only the supersampling ones tell Very High from High. To render
+  at screen resolution, pick "High" in the game; nothing else changes.
 
 ### Camera
 
@@ -185,6 +186,8 @@ draw at once.
   back on the track while it is on. Back, B, Esc or the key again returns to the race. The game's
   sound is paused meanwhile (FMOD's own category pause). Crashes take it over only in part, see
   Known limitations.
+* **Camera shake:** a slider for the race cameras' shake on bumps and hits, and a separate switch for
+  the shake from explosions and power plays, both against motion sickness.
 * **HUD key:** switches the power bar and the info bar off and on during a race.
 
 ## Copy protection
@@ -205,7 +208,7 @@ How the fix avoids it: **no game code is changed at all.** Everything works thro
 
 * values in the game's data: tweakables and their records (frame pacing, streaming pool, LOD and
   streaming distances, debug, unlock and lens flare switches, the achievements' debug unlock, the
-  slow motion and HUD render switches of the photo mode, the race cameras' FOV and near plane, AI
+  slow motion and HUD render switches of the photo mode, the race cameras' FOV, near plane and smoothed rotation, the explosion shake switch, AI
   skill limits), loaded HUD
   parameters, powerplay distance records, the main loop's accumulator, the power bar, the AI skill
   and the cars' chassis velocity,
@@ -221,7 +224,8 @@ How the fix avoids it: **no game code is changed at all.** Everything works thro
 
 The prompt bar glyphs, the title screen text, the icon size, the 60 fps and the streaming pool were
 first done with code patches and each set off exactly this hang, so they were rebuilt this way.
-The one exception is `RenderScale` set to a number (see Known limitations).
+An internal resolution option (`RenderScale`) needed code patches too and set off the same hang,
+so it was removed in 1.7.0.
 
 * `[Debug] PatchMask` (bits as in `src/common.h`) switches individual patches off, to find out
   which one causes a side effect. With `Log=1` the log also shows the number of SecuROM VM
@@ -299,7 +303,6 @@ The file is split into sections. INIs from older versions with everything under 
 | Key | Default | Meaning |
 |---|---|---|
 | `FrameRate` | 60 | 30 = stock. |
-| `RenderScale` | auto | Internal resolution factor 0.5–4.0; `auto` = 2.0 at Very High, 1.0 below. |
 | `Anisotropy` | 16 | Anisotropic filtering 2–16, 0 = stock (linear). |
 | `MotionBlurStrength` | 1.0 | Motion blur multiplier on top of the 60 fps compensation. 0 = off. |
 | `Vignette` | 0 | 1 = keep the cameras' darkened screen edges. |
@@ -328,6 +331,8 @@ The file is split into sections. INIs from older versions with everything under 
 | `ZoomInKey`, `ZoomOutKey`, `ZoomResetKey` | 0x31, 0x32, 0x33 | Virtual key codes (1, 2, 3 on the top row). |
 | `PhotoMode` | 0 | 1 = photo mode with `PhotoModeKey` or the pad's Back button during a race. |
 | `PhotoModeKey` | 0x46 | Virtual key code (F). Keys the game uses itself (Esc, P, Enter, arrows) do not work, nor do the photo mode's own controls (W A S D, I J K L, Q E, U O, Shift, Ctrl, the zoom keys). |
+| `CameraShake` | 1.0 | How much the race cameras (chase and bumper) shake on bumps and hits, against motion sickness: below 1.0 their rotation is smoothed (a low pass up to 0.12 s at 0.0), so quick shaking is filtered and turns follow a little later. |
+| `ExplosionShakeOff` | 0 | 1 = no camera shake from explosions, collapsing buildings and power plays nearby (the game's own switch for it). |
 | `HudKey` | 0 | Virtual key code that switches the HUD off and on during a race (0x48 = H). 0 = no key. |
 
 **[Gameplay]**
@@ -356,7 +361,7 @@ The file is split into sections. INIs from older versions with everything under 
 
 | Key | Default | Meaning |
 |---|---|---|
-| `Log` | 0 | 1 = write `SplitSecondPad.log` (Direct3D device, FMOD events, music state, SecuROM VM contexts, every change of the profile `.sav` files). |
+| `Log` | 0 | 1 = write `SplitSecondPad.log` (Direct3D device, FMOD events, music state, SecuROM VM contexts, every change of the profile `.sav` files). For bug reports it starts with the fix version, Windows version, CPU, RAM, graphics card with video memory and driver, the game executable (size, CRC32, build check) and every DLL in the game folder or loaded from outside the Windows folder, so other mods and different executables show at once. |
 | `TestFeed`, `Profile` | 0 | Development only: pad state from shared memory (`tools/padfeed.py`), call counters. |
 | `PatchMask` | 0xFFFFFFFF | Development: bit mask of the patches that may be applied (`PATCH_*` in `src/common.h`). |
 
@@ -366,12 +371,13 @@ The file is split into sections. INIs from older versions with everything under 
   joystick (e.g. a wheel) is present, since those names are shared by all devices.
 * 60 fps: races, AI and physics were checked; not every power play and cutscene was. Set
   `FrameRate=30` if something looks off.
-* `RenderScale` other than `auto` patches code in the render target and HUD setup (nine places),
-  the only option that changes game code. Leave it at `auto` if the game hangs after a few
-  minutes with it set.
 * Boost, the power bar fill, the photo mode and the HUD key work for player 1 only; the photo mode
   only on a single screen.
 * With `VirtualPads=0` the per-frame extras do not run (see `VirtualPads`).
+* Known issue: at "Very High" a thin line can show at the bottom edge of the screen at speed and
+  stay. It comes with the game's 2x supersampling only (motion blur, vignette and gradient are
+  ruled out). Workaround: pick "High" in the game, which renders at the native desktop resolution
+  and differs from Very High in nothing else.
 * Photo mode on crashes: once your car is wrecked, the game's crash sequence decides the view.
   On a crash on the road (walls, other cars, power plays) the photo camera stays tied to the car
   and is not fully free. After leaving the track (falls) the game holds a waiting view that no

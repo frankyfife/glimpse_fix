@@ -59,7 +59,6 @@ static Option kOptions[] = {
     { "Controller", "ButtonGlyphs", CHOICE, "Button prompts", "Icons in the prompt bar while the pad is in use. Keyboard = never switch.", "xbox", "xbox|Xbox;playstation|PlayStation;keyboard|Keyboard" },
     // Graphics
     { "Graphics", "FrameRate", CHOICE, "Frame rate", "60 fps with the simulation stepped exactly as at 30 fps.", "60", "60|60 fps;30|30 fps (stock)" },
-    { "Graphics", "RenderScale", CHOICE, "Internal resolution", "Render resolution as a factor of the screen resolution. Auto = as the game: 2.0 at Very High, 1.0 below. Anything but Auto changes game code; leave it at Auto if the game hangs after a few minutes.", "auto", "auto|Auto;0.75|0.75x;1.0|1.0x;1.25|1.25x;1.5|1.5x;2.0|2.0x;3.0|3.0x;4.0|4.0x" },
     { "Graphics", "Anisotropy", CHOICE, "Anisotropic filtering", "Sharper textures at an angle. Off = the game's plain linear filtering.", "16", "0|Off;2|2x;4|4x;8|8x;16|16x" },
     { "Graphics", "MotionBlurStrength", RANGE, "Motion blur", "Multiplier on the cameras' motion blur (graphics quality High or Very High). 0 = off.", "1.0", 0, 0, 3, 0.1, 1 },
     { "Graphics", "Vignette", BOOL_OPT, "Vignette", "Darkened screen edges of the race cameras.", "0" },
@@ -80,6 +79,8 @@ static Option kOptions[] = {
     // Camera
     { "Camera", "FOV", RANGE, "Field of view", "Race cameras (chase and bumper) as a factor of the game's own; the game still widens the view with speed.", "1.0", 0, 0.5, 2, 0.05, 2 },
     { "Camera", "UltrawideFix", BOOL_OPT, "Ultrawide fix", "On screens wider than 16:9 the picture keeps the height of 16:9 instead of losing the top and bottom.", "1" },
+    { "Camera", "CameraShake", RANGE, "Camera shake", "How much the race cameras (chase and bumper) shake on bumps and hits. Lower values smooth their rotation and help against motion sickness; turns follow a little later.", "1.0", 0, 0, 1, 0.05, 2 },
+    { "Camera", "ExplosionShakeOff", BOOL_OPT, "No explosion shake", "On: the camera no longer shakes when explosions, collapsing buildings and power plays go off nearby.", "0" },
     { "Camera", "ZoomKeys", BOOL_OPT, "Zoom keys", "Zoom the race camera while a key is held.", "0" },
     { "Camera", "ZoomInKey", CHOICE, "  Zoom in", "Key held to zoom closer.", "0x31", KEY_CHOICES },
     { "Camera", "ZoomOutKey", CHOICE, "  Zoom out", "Key held to zoom wider.", "0x32", KEY_CHOICES },
@@ -398,7 +399,8 @@ static int RangeSteps(const Option& o) { return (int)((o.hi - o.lo) / o.step + 0
 static void ShowValue(Option& o, double v)
 {
     std::string text = FormatRange(o, v);
-    if (!strcmp(o.key, "BoostMaxSpeed")) text += " m/s  " + std::to_string((int)(v * 3.6 + 0.5)) + " km/h";
+    if (!strcmp(o.key, "CameraShake")) text = std::to_string((int)(v * 100 + 0.5)) + " %";
+    else if (!strcmp(o.key, "BoostMaxSpeed")) text += " m/s  " + std::to_string((int)(v * 3.6 + 0.5)) + " km/h";
     else if (!strcmp(o.key, "BoostAcceleration")) text += " m/s per s";
     else if (strstr(o.key, "Strength") || strstr(o.key, "Blur") || strstr(o.key, "Bloom") || strstr(o.key, "Scale") ||
              !strcmp(o.key, "Exposure") || !strcmp(o.key, "FOV"))
@@ -526,7 +528,7 @@ struct Preset {
 };
 static const Preset kPresets[] = {
     { "Recommended", "" },  // every option at its default
-    { "Original game", "FrameRate=30;RenderScale=auto;Anisotropy=0;MotionBlurStrength=1.0;Vignette=1;Bloom=1;BloomStrength=1.0;BloomTone=1.0;BloomCurve=1.0;Exposure=1.0;LensFlare=1;ParticleFlare=1;FixPowerplayIconSize=0;StreamPoolMB=0;LodDistanceScale=1.0;PopInFix=0;SeparateTriggers=0;UltrawideFix=0" },
+    { "Original game", "FrameRate=30;Anisotropy=0;MotionBlurStrength=1.0;Vignette=1;Bloom=1;BloomStrength=1.0;BloomTone=1.0;BloomCurve=1.0;Exposure=1.0;LensFlare=1;ParticleFlare=1;FixPowerplayIconSize=0;StreamPoolMB=0;LodDistanceScale=1.0;PopInFix=0;SeparateTriggers=0;UltrawideFix=0" },
     { "Chaos", "UnlockAll=1;Boost=1;PowerBarFill=1;AIBoost=1;AIBoostChaos=1" },
 };
 

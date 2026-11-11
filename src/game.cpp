@@ -744,6 +744,7 @@ void OnInputFrame()
     if (s_knownBuild && g_cfg.fixIconSize && (g_cfg.patchMask & PATCH_ICONSIZE)) FixPowerplayIconSize();
     if (s_knownBuild && (g_cfg.patchMask & PATCH_UNLOCK)) ApplyUnlocks();
     if (s_knownBuild && (g_cfg.patchMask & PATCH_FLARES)) ApplyLensFlare();
+    if (s_knownBuild && g_cfg.explosionShakeOff && (g_cfg.patchMask & PATCH_CAMERA)) ApplyExplosionShake();
     if (s_knownBuild && (g_cfg.boost || g_cfg.powerFill || g_cfg.aiBoost) && (g_cfg.patchMask & PATCH_BOOST)) BoostTick();
     if (s_knownBuild && (g_cfg.zoomKeys || g_cfg.photoMode || g_cfg.hudKey) && (g_cfg.patchMask & PATCH_CAMERA)) CameraTick();
     if (g_cfg.log && s_knownBuild) WatchVmContexts();
@@ -808,6 +809,7 @@ void ApplyGamePatches()
         return;
     }
     s_knownBuild = true;
+    Log("SplitSecond.exe build recognised (Steam 1.0.0.1)");
     const unsigned mask = g_cfg.patchMask;
     if (g_cfg.separateTriggers && (mask & PATCH_TRIGGERS)) PatchTriggerPreset();
     if (mask & PATCH_RUMBLE) HookRumble();
@@ -819,7 +821,6 @@ void ApplyGamePatches()
     if (mask & PATCH_MOTIONBLUR) PatchMotionBlur();
     if (mask & PATCH_VIGNETTE) PatchVignette();
     if (mask & PATCH_FLARES) PatchBloomAndFlares();
-    if (mask & PATCH_RENDERSCALE) PatchRenderScale();
     if (mask & PATCH_CAMERA) PatchCamera();
     if (mask & PATCH_CAMERA) PatchDepthOfField();
     if (g_cfg.profile) InstallProfiler();

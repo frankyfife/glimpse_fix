@@ -114,12 +114,6 @@ static void LoadConfig()
 
     // [Graphics]
     g_cfg.frameRate = IniInt("Graphics", "FrameRate", 60) == 30 ? 30 : 60;
-    {
-        char buf[32];
-        IniString("Graphics", "RenderScale", "auto", buf, sizeof(buf));
-        float rs = (float)atof(buf);  // "auto" reads as 0
-        g_cfg.renderScale = rs <= 0 ? 0 : rs < 0.5f ? 0.5f : rs > 4.0f ? 4.0f : rs;
-    }
     g_cfg.anisotropy = IniInt("Graphics", "Anisotropy", 16);
     if (g_cfg.anisotropy > 16) g_cfg.anisotropy = 16;
     g_cfg.motionBlurStrength = IniFloat("Graphics", "MotionBlurStrength", 1.0f, 0.0f, 10.0f);
@@ -148,6 +142,8 @@ static void LoadConfig()
     g_cfg.photoMode = IniBool("Camera", "PhotoMode", false);
     g_cfg.photoModeKey = IniInt("Camera", "PhotoModeKey", 'F');
     g_cfg.hudKey = IniInt("Camera", "HudKey", 0);
+    g_cfg.cameraShake = IniFloat("Camera", "CameraShake", 1.0f, 0.0f, 1.0f);
+    g_cfg.explosionShakeOff = IniBool("Camera", "ExplosionShakeOff", false);
 
     // [Gameplay]
     g_cfg.unlockAll = IniBool("Gameplay", "UnlockAll", false);
@@ -226,6 +222,7 @@ extern "C" HRESULT WINAPI Proxy_DirectInput8Create(HINSTANCE inst, DWORD version
     static bool initialized;
     if (!initialized) {
         initialized = true;
+        LogEnvironment();  // here, not in DllMain: it reads files, the registry and the module list
         LoadXInput();
         ApplyGamePatches();
     }
