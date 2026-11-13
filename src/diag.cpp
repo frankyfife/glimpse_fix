@@ -152,8 +152,347 @@ static void CaptureBackBuffer(IDirect3DDevice9* dev, DWORD index)
     if (bb) bb->Release();
 }
 
+// ---------------------------------------------------------------- frame dump (Log=1, F9)
+
+// One frame, pass by pass: whenever the game switches render target 0, the target it drew into is
+// saved (a JPG of all of it, a PNG of its bottom 64 rows) and the mean colour of its bottom rows is
+// logged, with the targets and textures each pass reads. StretchRect copies are logged and their
+// destination saved. Only reads; the device state the game set is never changed.
+typedef HRESULT(STDMETHODCALLTYPE* SetRenderTarget_t)(IDirect3DDevice9*, DWORD, IDirect3DSurface9*);
+typedef HRESULT(STDMETHODCALLTYPE* StretchRect_t)(IDirect3DDevice9*, IDirect3DSurface9*, const RECT*, IDirect3DSurface9*,
+                                                  const RECT*, D3DTEXTUREFILTERTYPE);
+typedef HRESULT(STDMETHODCALLTYPE* DrawPrimitive_t)(IDirect3DDevice9*, D3DPRIMITIVETYPE, UINT, UINT);
+typedef HRESULT(STDMETHODCALLTYPE* DrawIndexedPrimitive_t)(IDirect3DDevice9*, D3DPRIMITIVETYPE, INT, UINT, UINT, UINT, UINT);
+typedef HRESULT(STDMETHODCALLTYPE* DrawPrimitiveUP_t)(IDirect3DDevice9*, D3DPRIMITIVETYPE, UINT, const void*, UINT);
+typedef HRESULT(STDMETHODCALLTYPE* DrawIndexedPrimitiveUP_t)(IDirect3DDevice9*, D3DPRIMITIVETYPE, UINT, UINT, UINT, const void*,
+                                                             D3DFORMAT, const void*, UINT);
+static SetRenderTarget_t s_origSetRenderTarget;
+static StretchRect_t s_origStretchRect;
+static DrawPrimitive_t s_origDrawPrimitive;
+static DrawIndexedPrimitive_t s_origDrawIndexedPrimitive;
+static DrawPrimitiveUP_t s_origDrawPrimitiveUP;
+static DrawIndexedPrimitiveUP_t s_origDrawIndexedPrimitiveUP;
+
+static bool s_dumping;     // the current frame is dumped
+static DWORD s_dumpIndex;  // F9 presses so far
+static int s_pass;         // render target switches in the dumped frame
+static DWORD s_passDraws;  // draws into the current target
+static char s_dumpDir[MAX_PATH];
+
+static float Half(WORD h)
+{
+    DWORD sign = (h >> 15) & 1, exp = (h >> 10) & 31, man = h & 1023;
+    float v = exp ? (1.0f + man / 1024.0f) * (float)(1 << exp) / 32768.0f : man / 1024.0f / 16384.0f;
+    if (exp == 31) v = 65504.0f;
+    return sign ? -v : v;
+}
+
+// mean colour of one row of a locked surface, false for formats not read here
+static bool RowMean(const D3DLOCKED_RECT& lr, D3DFORMAT fmt, UINT width, UINT y, float out[4])
+{
+    const BYTE* row = (const BYTE*)lr.pBits + (size_t)y * lr.Pitch;
+    double sum[4] = {};
+    for (UINT x = 0; x < width; x++) {
+        float c[4];
+        if (fmt == D3DFMT_A8R8G8B8 || fmt == D3DFMT_X8R8G8B8) {
+            DWORD p = ((const DWORD*)row)[x];
+            c[0] = ((p >> 16) & 255) / 255.0f, c[1] = ((p >> 8) & 255) / 255.0f, c[2] = (p & 255) / 255.0f, c[3] = (p >> 24) / 255.0f;
+        } else if (fmt == D3DFMT_A2R10G10B10) {
+            DWORD p = ((const DWORD*)row)[x];
+            c[0] = ((p >> 20) & 1023) / 1023.0f, c[1] = ((p >> 10) & 1023) / 1023.0f, c[2] = (p & 1023) / 1023.0f, c[3] = (p >> 30) / 3.0f;
+        } else if (fmt == D3DFMT_A16B16G16R16F) {
+            const WORD* p = (const WORD*)row + x * 4;
+            for (int i = 0; i < 4; i++) c[i] = Half(p[i]);
+        } else if (fmt == D3DFMT_R32F) {
+            c[0] = ((const float*)row)[x], c[1] = c[2] = c[3] = 0.0f;
+        } else if (fmt == D3DFMT_G16R16F) {
+            const WORD* p = (const WORD*)row + x * 2;
+            c[0] = Half(p[0]), c[1] = Half(p[1]), c[2] = c[3] = 0.0f;
+        } else {
+            return false;
+        }
+        for (int i = 0; i < 4; i++) sum[i] += c[i];
+    }
+    for (int i = 0; i < 4; i++) out[i] = (float)(sum[i] / width);
+    return true;
+}
+
+static void DumpSurface(IDirect3DDevice9* dev, IDirect3DSurface9* surf, const char* what)
+{
+    static D3DXSaveSurfaceToFileA_t save;
+    if (!save) {
+        HMODULE x = GetModuleHandleA("d3dx9_42.dll");
+        save = x ? (D3DXSaveSurfaceToFileA_t)GetProcAddress(x, "D3DXSaveSurfaceToFileA") : NULL;
+    }
+    D3DSURFACE_DESC d;
+    if (!surf || FAILED(surf->GetDesc(&d))) return;
+    IDirect3DSurface9 *resolved = NULL, *sys = NULL, *src = surf;
+    HRESULT hr = D3D_OK;
+    // a multisampled target is resolved into a plain one first
+    if (d.MultiSampleType != D3DMULTISAMPLE_NONE) {
+        hr = dev->CreateRenderTarget(d.Width, d.Height, d.Format, D3DMULTISAMPLE_NONE, 0, FALSE, &resolved, NULL);
+        if (SUCCEEDED(hr)) hr = s_origStretchRect(dev, surf, NULL, resolved, NULL, D3DTEXF_NONE);
+        src = resolved;
+    }
+    if (SUCCEEDED(hr)) hr = dev->CreateOffscreenPlainSurface(d.Width, d.Height, d.Format, D3DPOOL_SYSTEMMEM, &sys, NULL);
+    if (SUCCEEDED(hr)) hr = dev->GetRenderTargetData(src, sys);
+    char name[96], path[MAX_PATH];
+    wsprintfA(name, "f%lu_%02d_%s_%ux%u_fmt%u", s_dumpIndex, s_pass, what, d.Width, d.Height, d.Format);
+    if (FAILED(hr)) {
+        Log("dump %s: not readable (%08lx), multisample %d, usage %lx, pool %d", name, hr, d.MultiSampleType, d.Usage, d.Pool);
+    } else {
+        D3DLOCKED_RECT lr;
+        if (SUCCEEDED(sys->LockRect(&lr, NULL, D3DLOCK_READONLY))) {
+            char line[512];
+            int n = wsprintfA(line, "dump %s: row means r g b a (x1000)", name);
+            UINT rows[] = { d.Height - 1, d.Height - 2, d.Height - 3, d.Height - 4, d.Height - 6, d.Height - 8, d.Height - 16, d.Height / 2 };
+            for (UINT y : rows) {
+                float m[4];
+                if (y >= d.Height || !RowMean(lr, d.Format, d.Width, y, m)) continue;
+                n += wsprintfA(line + n, " | y%u %d %d %d %d", y, (int)(m[0] * 1000), (int)(m[1] * 1000), (int)(m[2] * 1000),
+                               (int)(m[3] * 1000));
+                if (n > 440) break;
+            }
+            sys->UnlockRect();
+            Log("%s", line);
+        }
+        if (save) {
+            wsprintfA(path, "%s\\%s.jpg", s_dumpDir, name);
+            HRESULT h1 = save(path, 1 /* D3DXIFF_JPG */, sys, NULL, NULL);
+            RECT bottom = { 0, d.Height > 64 ? (LONG)d.Height - 64 : 0, (LONG)d.Width, (LONG)d.Height };
+            wsprintfA(path, "%s\\%s_bottom.png", s_dumpDir, name);
+            HRESULT h2 = save(path, 3 /* D3DXIFF_PNG */, sys, NULL, &bottom);
+            if (FAILED(h2)) {
+                wsprintfA(path, "%s\\%s_bottom.dds", s_dumpDir, name);
+                h2 = save(path, 4 /* D3DXIFF_DDS */, sys, NULL, &bottom);
+            }
+            if (FAILED(h1) || FAILED(h2)) Log("dump %s: saving failed (%08lx %08lx)", name, h1, h2);
+        }
+    }
+    if (sys) sys->Release();
+    if (resolved) resolved->Release();
+}
+
+static void DescribeSurface(IDirect3DSurface9* s, char* out)
+{
+    D3DSURFACE_DESC d;
+    IDirect3DTexture9* tex = NULL;
+    if (s && SUCCEEDED(s->GetContainer(IID_IDirect3DTexture9, (void**)&tex)) && tex) tex->Release();
+    if (s && SUCCEEDED(s->GetDesc(&d)))
+        wsprintfA(out, "%p (texture %p) %ux%u fmt %u ms %d", s, tex, d.Width, d.Height, d.Format, d.MultiSampleType);
+    else
+        wsprintfA(out, "%p", s);
+}
+
+// at the first draw into a target: what it is and what the pass reads
+static void DumpPassStart(IDirect3DDevice9* dev)
+{
+    IDirect3DSurface9* rt = NULL;
+    dev->GetRenderTarget(0, &rt);
+    char desc[128];
+    DescribeSurface(rt, desc);
+    if (rt) rt->Release();
+    D3DVIEWPORT9 vp = {};
+    dev->GetViewport(&vp);
+    DWORD scissor = 0;
+    dev->GetRenderState(D3DRS_SCISSORTESTENABLE, &scissor);
+    RECT sr = {};
+    dev->GetScissorRect(&sr);
+    IDirect3DPixelShader9* ps = NULL;
+    dev->GetPixelShader(&ps);
+    if (ps) ps->Release();
+    Log("dump pass %02d: target %s, viewport %lu,%lu %lux%lu, scissor %lu (%ld,%ld-%ld,%ld), pixel shader %p", s_pass, desc, vp.X,
+        vp.Y, vp.Width, vp.Height, scissor, sr.left, sr.top, sr.right, sr.bottom, ps);
+    for (DWORD stage = 0; stage < 8; stage++) {
+        IDirect3DBaseTexture9* t = NULL;
+        if (FAILED(dev->GetTexture(stage, &t)) || !t) continue;
+        D3DSURFACE_DESC d = {};
+        if (t->GetType() == D3DRTYPE_TEXTURE) ((IDirect3DTexture9*)t)->GetLevelDesc(0, &d);
+        DWORD u = 0, v = 0, mag = 0;
+        dev->GetSamplerState(stage, D3DSAMP_ADDRESSU, &u);
+        dev->GetSamplerState(stage, D3DSAMP_ADDRESSV, &v);
+        dev->GetSamplerState(stage, D3DSAMP_MAGFILTER, &mag);
+        Log("dump pass %02d:   stage %lu texture %p %ux%u fmt %u usage %lx, address %lu/%lu, filter %lu", s_pass, stage, t, d.Width,
+            d.Height, d.Format, d.Usage, u, v, mag);
+        t->Release();
+    }
+}
+
+static void CountDraw(IDirect3DDevice9* dev)
+{
+    if (!s_dumping) return;
+    if (!s_passDraws++) DumpPassStart(dev);
+}
+
+void DumpMark(const char* what)
+{
+    if (s_dumping) Log("dump pass %02d: -- %s (after %lu draws)", s_pass, what, s_passDraws);
+}
+
+static HRESULT STDMETHODCALLTYPE Hook_DrawPrimitive(IDirect3DDevice9* dev, D3DPRIMITIVETYPE t, UINT a, UINT b)
+{
+    CountDraw(dev);
+    return s_origDrawPrimitive(dev, t, a, b);
+}
+
+static HRESULT STDMETHODCALLTYPE Hook_DrawIndexedPrimitive(IDirect3DDevice9* dev, D3DPRIMITIVETYPE t, INT a, UINT b, UINT c, UINT d, UINT e)
+{
+    CountDraw(dev);
+    return s_origDrawIndexedPrimitive(dev, t, a, b, c, d, e);
+}
+
+static HRESULT STDMETHODCALLTYPE Hook_DrawPrimitiveUP(IDirect3DDevice9* dev, D3DPRIMITIVETYPE t, UINT a, const void* b, UINT c)
+{
+    CountDraw(dev);
+    return s_origDrawPrimitiveUP(dev, t, a, b, c);
+}
+
+static HRESULT STDMETHODCALLTYPE Hook_DrawIndexedPrimitiveUP(IDirect3DDevice9* dev, D3DPRIMITIVETYPE t, UINT a, UINT b, UINT c, const void* d,
+                                                             D3DFORMAT e, const void* f, UINT g)
+{
+    CountDraw(dev);
+    return s_origDrawIndexedPrimitiveUP(dev, t, a, b, c, d, e, f, g);
+}
+
+static void EndPass(IDirect3DDevice9* dev, const char* why)
+{
+    if (s_passDraws) {
+        IDirect3DSurface9* rt = NULL;
+        if (SUCCEEDED(dev->GetRenderTarget(0, &rt)) && rt) {
+            Log("dump pass %02d: %lu draws, ends (%s)", s_pass, s_passDraws, why);
+            DumpSurface(dev, rt, "target");
+            rt->Release();
+        }
+        s_pass++;
+    }
+    s_passDraws = 0;
+}
+
+// The full screen passes (bloom and tone mapping, motion blur, depth of field, colour grading ...) all
+// draw through one helper (0x511BA0) that copies a quad template ([[0xD67758]+4], 4 vertices of 7
+// floats: position xyz, texture coordinates) and moves it by half a pixel plus a fixed 0.0005 up and
+// 0.00015 left in clip space. The fixed part is a fraction of a pixel at the resolutions the port was
+// made for, but at graphics quality Very High on a 4K screen the passes render at 7680x4320, where it
+// adds up to more than a pixel: every pass moves the picture up by a row and leaves its bottom row
+// unwritten, so whatever was drawn there once stays (a line at the bottom of the screen). For targets
+// above 2160 rows (3840 columns) the template is moved back by the part of the fixed offset that goes
+// beyond what it is at 2160 rows (3840 columns), so it never exceeds the fraction of a pixel it is at
+// native 4K. Only the template's position values are written; below that size nothing changes.
+static float s_quadOrigY[4], s_quadOrigX[4], s_quadSetY[4], s_quadSetX[4];
+static float* s_quad;
+
+static void FitQuadOffset(IDirect3DSurface9* surf)
+{
+    D3DSURFACE_DESC d;
+    if (!surf || FAILED(surf->GetDesc(&d))) return;
+    BYTE* holder = *(BYTE**)0x00D67758;
+    float* quad = holder ? *(float**)(holder + 4) : NULL;
+    if (!quad || IsBadReadPtr(quad, 0x70)) return;
+    // not inside the executable's code or constants
+    if ((DWORD)quad >= 0x00401000 && (DWORD)quad < 0x00CF5000) return;
+    if (quad != s_quad) {
+        for (int i = 0; i < 4; i++) {
+            float x = quad[i * 7], y = quad[i * 7 + 1];
+            if (x < -1.01f || x > 1.01f || y < -1.01f || y > 1.01f) {
+                static bool logged;
+                if (!logged) Log("full screen quad template not recognised (%.4f %.4f)", x, y);
+                logged = true;
+                return;
+            }
+            s_quadOrigX[i] = s_quadSetX[i] = x;
+            s_quadOrigY[i] = s_quadSetY[i] = y;
+        }
+        s_quad = quad;
+        Log("full screen quad template at %p: %.4f %.4f / %.4f %.4f / %.4f %.4f / %.4f %.4f", quad, quad[0], quad[1], quad[7], quad[8],
+            quad[14], quad[15], quad[21], quad[22]);
+    }
+    float dy = d.Height > 2160 ? 0.0005f * (1.0f - 2160.0f / d.Height) : 0.0f;
+    float dx = d.Width > 3840 ? 0.00015f * (1.0f - 3840.0f / d.Width) : 0.0f;
+    for (int i = 0; i < 4; i++) {
+        float* x = &quad[i * 7];
+        float* y = &quad[i * 7 + 1];
+        if (*x != s_quadSetX[i]) s_quadOrigX[i] = *x;  // the game wrote it meanwhile
+        if (*y != s_quadSetY[i]) s_quadOrigY[i] = *y;
+        s_quadSetX[i] = s_quadOrigX[i] + dx;
+        s_quadSetY[i] = s_quadOrigY[i] - dy;
+        if (*x != s_quadSetX[i]) *x = s_quadSetX[i];
+        if (*y != s_quadSetY[i]) *y = s_quadSetY[i];
+    }
+    static bool logged;
+    if ((dx || dy) && !logged) {
+        logged = true;
+        Log("full screen passes at %ux%u: quad offset reduced by %.6f up, %.6f left", d.Width, d.Height, dy, dx);
+    }
+}
+
+static HRESULT STDMETHODCALLTYPE Hook_SetRenderTarget(IDirect3DDevice9* dev, DWORD index, IDirect3DSurface9* surf)
+{
+    if (index == 0) FitQuadOffset(surf);
+    if (s_dumping && s_pass < 120) {
+        IDirect3DSurface9* cur = NULL;
+        dev->GetRenderTarget(index, &cur);
+        if (cur) cur->Release();
+        if (cur != surf) {
+            if (index == 0) {
+                EndPass(dev, "new target");
+            } else {
+                char desc[128];
+                DescribeSurface(surf, desc);
+                Log("dump pass %02d: render target %lu = %s", s_pass, index, desc);
+            }
+        }
+    }
+    return s_origSetRenderTarget(dev, index, surf);
+}
+
+static HRESULT STDMETHODCALLTYPE Hook_StretchRect(IDirect3DDevice9* dev, IDirect3DSurface9* src, const RECT* sr, IDirect3DSurface9* dst,
+                                                  const RECT* dr, D3DTEXTUREFILTERTYPE filter)
+{
+    HRESULT hr = s_origStretchRect(dev, src, sr, dst, dr, filter);
+    if (s_dumping && s_pass < 120) {
+        char a[128], b[128];
+        DescribeSurface(src, a);
+        DescribeSurface(dst, b);
+        Log("dump pass %02d: StretchRect %s (%ld,%ld-%ld,%ld) -> %s (%ld,%ld-%ld,%ld) filter %d -> %08lx", s_pass, a, sr ? sr->left : -1,
+            sr ? sr->top : -1, sr ? sr->right : -1, sr ? sr->bottom : -1, b, dr ? dr->left : -1, dr ? dr->top : -1, dr ? dr->right : -1,
+            dr ? dr->bottom : -1, filter, hr);
+        DumpSurface(dev, dst, "copy");
+    }
+    return hr;
+}
+
+static void DumpAtPresent(IDirect3DDevice9* dev)
+{
+    if (s_dumping) {
+        EndPass(dev, "present");
+        IDirect3DSurface9* bb = NULL;
+        if (SUCCEEDED(dev->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &bb)) && bb) {
+            DumpSurface(dev, bb, "backbuffer");
+            bb->Release();
+        }
+        s_dumping = false;
+        Log("dump %lu: done, %d passes, files in %s", s_dumpIndex, s_pass, s_dumpDir);
+    }
+    // F9 while the game has the focus dumps the next frame
+    static bool was;
+    DWORD pid = 0;
+    GetWindowThreadProcessId(GetForegroundWindow(), &pid);
+    bool down = pid == GetCurrentProcessId() && (GetAsyncKeyState(VK_F9) & 0x8000);
+    if (down && !was && s_origSetRenderTarget) {
+        s_dumpIndex++;
+        ModulePath(s_dumpDir, "glimpse_dump");
+        CreateDirectoryA(s_dumpDir, NULL);
+        s_dumping = true;
+        s_pass = 0;
+        s_passDraws = 0;
+        Log("dump %lu: next frame, graphics quality %d", s_dumpIndex, *(int*)0x00D0F7E8);
+    }
+    was = down;
+}
+
 static HRESULT STDMETHODCALLTYPE Diag_Present(IDirect3DDevice9* dev, const RECT* src, const RECT* dst, HWND wnd, const RGNDATA* dirty)
 {
+    if (g_cfg.log) DumpAtPresent(dev);
     static DWORD frames, since;
     DWORD now = GetTickCount();
     frames++;
@@ -194,6 +533,15 @@ static HRESULT STDMETHODCALLTYPE Diag_CreateDevice(IDirect3D9* d3d, UINT adapter
             Log("anisotropic filtering %dx", g_cfg.anisotropy);
         }
         PatchVtable(vt, 69, (void*)Hook_SetSamplerState, (void**)&s_origSetSamplerState);  // filtering, edge clamp
+        PatchVtable(vt, 37, (void*)Hook_SetRenderTarget, (void**)&s_origSetRenderTarget);  // quad offset, frame dump
+        if (g_cfg.log) {  // frame dump on F9
+            PatchVtable(vt, 34, (void*)Hook_StretchRect, (void**)&s_origStretchRect);
+            PatchVtable(vt, 81, (void*)Hook_DrawPrimitive, (void**)&s_origDrawPrimitive);
+            PatchVtable(vt, 82, (void*)Hook_DrawIndexedPrimitive, (void**)&s_origDrawIndexedPrimitive);
+            PatchVtable(vt, 83, (void*)Hook_DrawPrimitiveUP, (void**)&s_origDrawPrimitiveUP);
+            PatchVtable(vt, 84, (void*)Hook_DrawIndexedPrimitiveUP, (void**)&s_origDrawIndexedPrimitiveUP);
+            Log("frame dump: F9");
+        }
     }
     return hr;
 }

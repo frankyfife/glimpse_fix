@@ -86,10 +86,11 @@ extern Config g_cfg;
 void Log(const char* fmt, ...);
 
 // envlog.cpp (Log=1)
-#define GLIMPSE_VERSION "1.7.0"  // keep in step with config/glimpse_config.rc
+#define GLIMPSE_VERSION "1.7.1"  // keep in step with config/glimpse_config.rc
 void LogEnvironment();                     // system, executable, files and modules, at start
 void LogForeignModules(const char* when);  // modules loaded from outside the Windows folder
 void ModulePath(char* out, const char* file);  // file next to the DLL (game folder)
+void DumpMark(const char* what);  // frame dump (diag.cpp): a note in the dumped frame's log
 
 // XInput entry points, resolved from the system DLL
 typedef DWORD(WINAPI* XInputGetState_t)(DWORD, XINPUT_STATE*);

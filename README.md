@@ -147,9 +147,16 @@ draw at once.
   The route change markers (red and blue arrows) get their size as width x 2.25/1280, a constant
   only that code reads; it is set to 2.25 / width.
 * **Motion blur:** it blurs along one frame of camera motion, which at 60 fps is half as much;
-  the amount is doubled. `MotionBlurStrength` scales it further. At speed its samples reach past the
-  picture's edge and left a thin line at the bottom of the screen; during the blur pass the textures
-  are clamped to the edge (through the Direct3D device's sampler states).
+  the amount is doubled. `MotionBlurStrength` scales it further. During the blur pass the textures
+  are clamped to the edge (through the Direct3D device's sampler states), so samples that reach past
+  the picture at speed repeat its edge.
+* **Line at the bottom at Very High:** all full screen passes (tone mapping, motion blur, depth of
+  field, grading ...) draw one quad template that the game moves by half a pixel plus a fixed 0.0005
+  up and 0.00015 left in clip space. That is a fraction of a pixel up to 2160 rows, but Very High on
+  a 4K screen renders at 7680x4320, where it adds up to more than a pixel: every pass moved the picture
+  up a row and left its bottom row unwritten, so whatever landed there once stayed as a line. For
+  render targets above 2160 rows (or 3840 columns) the template's position values are set so the fixed
+  part stays what it is at native 4K; smaller targets are left as they are.
 * **Vignette and gradient:** the race cameras darken the screen edges and lay a translucent blue
   band over the top of the screen in the grading pass. `Vignette=0` sets the vignette's U/V scale
   to 0 for that pass, `Gradient=0` the gradient's alpha; the grading itself stays.
@@ -210,8 +217,8 @@ How the fix avoids it: **no game code is changed at all.** Everything works thro
   streaming distances, debug, unlock and lens flare switches, the achievements' debug unlock, the
   slow motion and HUD render switches of the photo mode, the race cameras' FOV, near plane and smoothed rotation, the explosion shake switch, AI
   skill limits), loaded HUD
-  parameters, powerplay distance records, the main loop's accumulator, the power bar, the AI skill
-  and the cars' chassis velocity,
+  parameters, the full screen passes' quad template positions, powerplay distance records, the main
+  loop's accumulator, the power bar, the AI skill and the cars' chassis velocity,
 * swapped vtable slots (motion blur, grading, bloom, depth of field and particle flare passes, AI
   player update, chase and bumper camera update, with the photo mode the other camera classes'
   update, the respot logic's update with the photo mode or `WreckTime`),
@@ -361,7 +368,7 @@ The file is split into sections. INIs from older versions with everything under 
 
 | Key | Default | Meaning |
 |---|---|---|
-| `Log` | 0 | 1 = write `SplitSecondPad.log` (Direct3D device, FMOD events, music state, SecuROM VM contexts, every change of the profile `.sav` files). For bug reports it starts with the fix version, Windows version, CPU, RAM, graphics card with video memory and driver, the game executable (size, CRC32, build check) and every DLL in the game folder or loaded from outside the Windows folder, so other mods and different executables show at once. |
+| `Log` | 0 | 1 = write `SplitSecondPad.log` (Direct3D device, FMOD events, music state, SecuROM VM contexts, every change of the profile `.sav` files). For bug reports it starts with the fix version, Windows version, CPU, RAM, graphics card with video memory and driver, the game executable (size, CRC32, build check) and every DLL in the game folder or loaded from outside the Windows folder, so other mods and different executables show at once. With `Log=1`, F9 in the game saves the next frame pass by pass to `glimpse_dump` (each render target as JPG plus its bottom rows as PNG, the passes and their inputs in the log), for image errors; the game stands still for a few seconds meanwhile. |
 | `TestFeed`, `Profile` | 0 | Development only: pad state from shared memory (`tools/padfeed.py`), call counters. |
 | `PatchMask` | 0xFFFFFFFF | Development: bit mask of the patches that may be applied (`PATCH_*` in `src/common.h`). |
 
@@ -374,10 +381,6 @@ The file is split into sections. INIs from older versions with everything under 
 * Boost, the power bar fill, the photo mode and the HUD key work for player 1 only; the photo mode
   only on a single screen.
 * With `VirtualPads=0` the per-frame extras do not run (see `VirtualPads`).
-* Known issue: at "Very High" a thin line can show at the bottom edge of the screen at speed and
-  stay. It comes with the game's 2x supersampling only (motion blur, vignette and gradient are
-  ruled out). Workaround: pick "High" in the game, which renders at the native desktop resolution
-  and differs from Very High in nothing else.
 * Photo mode on crashes: once your car is wrecked, the game's crash sequence decides the view.
   On a crash on the road (walls, other cars, power plays) the photo camera stays tied to the car
   and is not fully free. After leaving the track (falls) the game holds a waiting view that no
@@ -443,6 +446,7 @@ part of this repository.
 | `0x00D66B24` | HUD; parameters at +0x20, powerplay icon scales +0x214/+0x218 |
 | `0x00BB8494` | Route change marker size factor 2.25/1280 (read only by `0x4C7910`) |
 | `0x00BB42B0`, `0x00BB4048` | vtable slots of the motion blur pass `0x49B490` and the grading/vignette pass `0x49A7A0` |
+| `0x00D67758` | Full screen quad helper `0x511BA0`: template at `[+4]` (4 vertices of 7 floats, position xyz and texture coordinates), offset by `0x510CA0` (±0.5 / size) plus 0.0005 up, 0.00015 left |
 | `0x00BB3678`, `0x00BB39B8` | vtable slots of the bloom/tone mapping pass `0x492F50` (parameters: +0x38 bloom add, +0x3C/+0x40 bright pass, +0x58 add curve, +0x20 exposure) and the particle flare pass `0x496C60` |
 | `0x00D10A3C`, `0x00D37D08` | "PostProcess/SSLensFlare/z; Enable", "LensFlare/Config/a; Enable" |
 | `0x00B9B39C`, `0x00B9B3B0`, `0x00B9B380` | Import table: `BinkOpen`, `BinkWait`, `BinkDoFrame` (boot movies: `data/movies/bootup`) |

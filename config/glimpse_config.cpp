@@ -107,7 +107,7 @@ static Option kOptions[] = {
     { "Gameplay", "AIBoostStraightOnly", BOOL_OPT, "  AI boosts on straights only", "Off = anywhere while driving forward, also in corners.", "1" },
     { "Gameplay", "AIBoostChaos", BOOL_OPT, "  Chaos mode", "Every AI car boosts all the time, everywhere, with an endless tank, a full power play bar and the highest AI skill. Overrides the three settings above.", "0" },
     // Debug
-    { "Debug", "Log", BOOL_OPT, "Write SplitSecondPad.log", "A log next to the game, for bug reports.", "0" },
+    { "Debug", "Log", BOOL_OPT, "Write SplitSecondPad.log", "A log next to the game, for bug reports. F9 in the game then saves the next frame pass by pass to glimpse_dump, for image errors.", "0" },
 };
 static const int kOptionCount = sizeof(kOptions) / sizeof(kOptions[0]);
 static const char* const kPages[] = { "Controller", "Graphics", "World", "Camera", "Gameplay", "AI", "Debug" };

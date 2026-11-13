@@ -29,6 +29,7 @@ static void __fastcall Hook_MotionBlurRender(BYTE* self, void*, void* a, void* b
                 params ? *(int*)(params + 0x20) : -1, *(int*)0x00D0F7E8);
     }
     float scale = s_blurScale * BoostBlurScale();
+    DumpMark("motion blur begins");
     BeginEdgeClamp();  // samples past the picture's edge would bring in a line at the bottom (diag.cpp)
     if (!amount || scale == 1.0f) {
         s_origMotionBlur(self, a, b, c, d, e);
@@ -39,6 +40,7 @@ static void __fastcall Hook_MotionBlurRender(BYTE* self, void*, void* a, void* b
         *amount = stock;
     }
     EndEdgeClamp();
+    DumpMark("motion blur ends");
 }
 
 void PatchMotionBlur()
@@ -175,7 +177,9 @@ static void __fastcall Hook_BloomRender(BYTE* self, void*, void* a, void* b, voi
     // photo mode: bloom down to 0 switches it off, any other value than 1 switches it on
     if (g_photoBloom < 0.05f || (!g_cfg.bloom && g_photoBloom == 1.0f)) params[0x38] = 0;
     else if (g_photoBloom != 1.0f) params[0x38] = 1;
+    DumpMark("bloom and tone mapping begin");
     s_origBloom(self, a, b, c, d, e);
+    DumpMark("bloom and tone mapping end");
     for (int i = 0; i < 4; i++) *(float*)(params + kBloomOffsets[i]) = stock[i];
     params[0x38] = add;
 }
