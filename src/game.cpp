@@ -306,6 +306,9 @@ static BYTE* const kUnlockAll[] = {
     (BYTE*)G(0x00D7D978),  // UI/Events Select/All Events Unlocked
     (BYTE*)G(0x00D6F8F0),  // UI/Vehicle Select/All Vehicles Unlocked
 };
+static const size_t kAllEpisodesIndex = 1;
+static int s_suspendAllEpisodes;     // scoped suspend depth during Hook_RaceResultsInput
+static bool s_episodeSelectSuspend;  // latched from cSeasonEpisodeSelect::OnEnter until cInGameMovieState::OnEnter
 static BYTE* const kBonusContent = (BYTE*)G(0x00D6C49C);  // PCcheat;Cobretti SlipStream .. Euro Livery Pack, 8 bytes apart
 static const int kBonusCount = 10;
 
@@ -399,18 +402,212 @@ static void UnlockDecals()
     *kUnlockAnchovy = 1;
 }
 
+static bool AllEpisodesSuspended() { return s_suspendAllEpisodes > 0 || s_episodeSelectSuspend; }
+
+static bool InSeasonEpisodeCompleted()
+{
+    if (CurrentBuild() != BUILD_STEAM) return false;
+    __try {
+        const BYTE* seasonMgr = *(const BYTE* const*)0x00D64E40;
+        return seasonMgr && seasonMgr[0x08] && seasonMgr[0x16];
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
 static void ApplyUnlocks()
 {
     static bool logged;
     if (g_cfg.unlockDecals) UnlockDecals();
-    if (g_cfg.unlockAll)
-        for (BYTE* b : kUnlockAll) *b = 1;
+    if (g_cfg.unlockAll) {
+        if (s_episodeSelectSuspend && !InSeasonEpisodeCompleted()) {
+            s_episodeSelectSuspend = false;
+            Log("unlocks: season episode select ended before movie state, restored all-episodes flag");
+        }
+        for (size_t i = 0; i < sizeof(kUnlockAll) / sizeof(kUnlockAll[0]); i++) {
+            if (i == kAllEpisodesIndex && AllEpisodesSuspended()) continue;
+            *kUnlockAll[i] = 1;
+        }
+    }
     if (g_cfg.bonusContent)
         for (int i = 0; i < kBonusCount; i++) kBonusContent[i * 8] = 1;
     if (!logged && (g_cfg.unlockAll || g_cfg.bonusContent)) {
         logged = true;
         Log("unlocks: all=%d bonus=%d", g_cfg.unlockAll, g_cfg.bonusContent);
     }
+}
+
+// UnlockAll=1 sets UI/Episode Select/All Episodes Unlocked (0xD6FBA0), making cEpisode::IsUnlocked
+// (0x7749F0) return true for all 12 episodes. After winning an episode's Elite Race,
+// cRaceResults::OnInput (0x801EC0) checks cSeason::CountLockedEpisodes (0x7754D0 -> 0x7749F0) at
+// 0x8020B1 / 0x80215F: seeing 0 locked episodes, it skips cSeasonEpisodeSelect (layer 0x63, which
+// unlocks the chosen next episode via 0x772B00 and advances season->currentEpisode) and enters
+// cInGameMovieState (0x417370). On Episode 1 (currentEpisode == 0), 0x416EB0 formats NT_Episode1.bik
+// (which does not exist; only NT_Episode2..12.bik ship), Bink enters error state 12 (0x57AF0C), and
+// 0x4B5D4B only finishes on state 9, soft-locking on a black screen under NextTimeOverlay.gfx.
+//
+// Steam build only: suspend 0xD6FBA0 during cRaceResults::OnInput (when in Season mode after an
+// episode completion) and hold it at 0 from cSeasonEpisodeSelect::OnEnter until
+// cInGameMovieState::OnEnter restores it. cSeasonEpisodeSelect::OnInput (0x80BC30) is intentionally
+// not wrapped because its call tree enters SecuROM's VM via 0x772B00 -> 0x774A10 and save writes
+// 0x5905D0 -> 0x590C50/0x590E90. Also guard cInGameMovieState::OnEnter against missing
+// NT_Episode%d.bik if all 12 episodes were already unlocked in the save before Episode 1's Elite
+// Race was beaten.
+typedef void(__thiscall* SeasonScreenInput_t)(void* self, void* input);
+typedef void(__thiscall* SeasonScreenEnter_t)(void* self);
+static SeasonScreenInput_t s_origRaceResultsInput;
+static SeasonScreenEnter_t s_origEpisodeSelectEnter;
+static SeasonScreenEnter_t s_origMovieStateEnter;
+
+struct ScopedSuspendAllEpisodes {
+    BYTE* flag;
+    BYTE prev;
+    explicit ScopedSuspendAllEpisodes(bool active = true)
+        : flag(active ? kUnlockAll[kAllEpisodesIndex] : NULL), prev(flag ? *flag : 0)
+    {
+        if (flag) {
+            s_suspendAllEpisodes++;
+            *flag = 0;
+        }
+    }
+    ~ScopedSuspendAllEpisodes()
+    {
+        if (flag) {
+            s_suspendAllEpisodes--;
+            if (!AllEpisodesSuspended()) *flag = prev;
+        }
+    }
+};
+
+struct ScopedClearByte {
+    BYTE* ptr;
+    BYTE prev;
+    explicit ScopedClearByte(BYTE* p) : ptr(p), prev(p ? *p : 0)
+    {
+        if (ptr) *ptr = 0;
+    }
+    ~ScopedClearByte()
+    {
+        if (ptr) *ptr = prev;
+    }
+};
+
+static int ReadEpisodeChoiceCount(const void* self)
+{
+    __try {
+        return *(const int*)((const BYTE*)self + 0x220);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return -1;
+    }
+}
+
+static BYTE* MissingNextTimeFlag(const BYTE* state, int* epOut)
+{
+    __try {
+        BYTE* seasonMgr = *(BYTE* const*)0x00D64E40;
+        // The debug tweakable at 0xD66AD4 (default 0) can also enter 0x416EB0; intentionally out of scope.
+        if (!seasonMgr || !seasonMgr[0x08] || state[0x10] || !seasonMgr[0x16]) return NULL;
+        int curEp = *(const int*)(seasonMgr + 0x0C);
+        // 0x416EB0 opens NT_Episode(curEp + 1).bik; only NT_Episode2..12.bik exist.
+        if (curEp >= 1 && curEp <= 11) return NULL;
+        *epOut = curEp;
+        return seasonMgr + 0x16;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return NULL;
+    }
+}
+
+static void __fastcall Hook_RaceResultsInput(void* self, void*, void* input)
+{
+    ScopedSuspendAllEpisodes suspend(InSeasonEpisodeCompleted());
+    s_origRaceResultsInput(self, input);
+}
+
+static void __fastcall Hook_EpisodeSelectEnter(void* self, void*)
+{
+    s_episodeSelectSuspend = true;
+    *kUnlockAll[kAllEpisodesIndex] = 0;
+    s_origEpisodeSelectEnter(self);
+    Log("unlocks: season episode select opened with real save progression (%d choices)",
+        ReadEpisodeChoiceCount(self));
+}
+
+static void __fastcall Hook_InGameMovieStateEnter(void* self, void*)
+{
+    if (s_episodeSelectSuspend) {
+        s_episodeSelectSuspend = false;
+        if (!AllEpisodesSuspended()) *kUnlockAll[kAllEpisodesIndex] = 1;
+    }
+    int missingEp = -1;
+    BYTE* epDone = MissingNextTimeFlag((const BYTE*)self, &missingEp);
+    if (epDone)
+        Log("unlocks: skipped missing Next Time movie for episode %d (NT_Episode%d.bik)",
+            missingEp + 1, missingEp + 1);
+    ScopedClearByte suppress(epDone);
+    s_origMovieStateEnter(self);
+}
+
+static bool CareerUnlockHooksMatch()
+{
+    __try {
+        void** resultsVt = (void**)0x00C1F83C;
+        void** epSelectVt = (void**)0x00C21014;
+        void** movieStateVt = (void**)0x00BA3518;
+        if (!ClassIs(resultsVt, 0x00C972C0, ".?AVcRaceResults@InGameUI@@") ||
+            resultsVt[16] != (void*)0x00801EC0 ||
+            !ClassIs(epSelectVt, 0x00C98B94, ".?AVcSeasonEpisodeSelect@InGameUI@@") ||
+            epSelectVt[2] != (void*)0x0080BEB0 ||
+            !ClassIs(movieStateVt, 0x00C745A4, ".?AVcInGameMovieState@GameStates@@") ||
+            movieStateVt[1] != (void*)0x00417370)
+            return false;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+    return BytesMatch((void*)0x00801EC0, "83EC28578BF9837F58020F85C9030000") &&
+           BytesMatch((void*)0x008020AA, "385E16741D8B0EE81A34F7FF") &&
+           BytesMatch((void*)0x0080BEB0, "558BEC83E4F86AFF68BF42B40064A100") &&
+           BytesMatch((void*)0x0080BF0D, "E88E95F6FF8BF8568BCBE82493F6FF8BC8E8CD8AF6FF") &&
+           BytesMatch((void*)0x00417370, "64A1000000006AFF6843FDB200506489") &&
+           BytesMatch((void*)0x00417438, "A1404ED60080780800") &&
+           BytesMatch((void*)0x0041744B, "807E10008B480C751780781600");
+}
+
+static void InstallUnlockAllCareerFix()
+{
+    if (!g_cfg.unlockAll) return;
+    if (CurrentBuild() != BUILD_STEAM) {
+        Log("unlocks: career episode progression fix is Steam build only, not the Russian depot (%s)",
+            BuildName());
+        return;
+    }
+    if (!CareerUnlockHooksMatch()) {
+        Log("unlocks: career episode progression vtables mismatch, left as is");
+        return;
+    }
+    struct HookSlot {
+        void** slot;
+        void* hook;
+        void** orig;
+    };
+    HookSlot hooks[3] = {
+        { (void**)0x00C1F87C, (void*)Hook_RaceResultsInput, (void**)&s_origRaceResultsInput },
+        { (void**)0x00C2101C, (void*)Hook_EpisodeSelectEnter, (void**)&s_origEpisodeSelectEnter },
+        { (void**)0x00BA351C, (void*)Hook_InGameMovieStateEnter, (void**)&s_origMovieStateEnter },
+    };
+    int installed = 0;
+    for (; installed < 3; installed++) {
+        if (!SwapSlot(hooks[installed].slot, hooks[installed].hook, hooks[installed].orig)) break;
+    }
+    if (installed < 3) {
+        for (int i = installed - 1; i >= 0; i--) {
+            if (!WriteSlot(hooks[i].slot, *hooks[i].orig))
+                Log("unlocks: career episode progression rollback failed for slot %d", i);
+            *hooks[i].orig = NULL;
+        }
+        Log("unlocks: career episode progression slot %d cannot be written, rolled back", installed);
+        return;
+    }
+    Log("unlocks: career episode progression hooked (cRaceResults, cSeasonEpisodeSelect, cInGameMovieState)");
 }
 
 // ---------------------------------------------------------------- rumble
@@ -1276,6 +1473,7 @@ void ApplyGamePatches()
     if (mask & PATCH_CAMERA) PatchDepthOfField();
     if (mask & PATCH_RACEEND) InstallRaceEndTiming();
     if (g_cfg.textureLoadFix && (mask & PATCH_TEXLOAD)) InstallTextureLoadFix();
+    if (mask & PATCH_UNLOCK) InstallUnlockAllCareerFix();
     if (g_cfg.steamLan && (mask & PATCH_ONLINE)) OnlineStart();
     CheckOpponentEngineBanks();
     HookSoundBanks();

@@ -700,7 +700,9 @@ How the fix avoids it: **no game code is changed at all.** Everything works thro
   and race results update (`0xC1F848`) with `LapSelect=1`,
   `VolumeMeter` slot 9 at `0xC1E028` with `Ducking=1`,
   `Flanger` slot 9 at `0xC1DE54` with `PowerPlayFlanger=1`,
-  and `VoiceDSP` slot 9 at `0xC32824` with `SoundPlacement=1`),
+  `VoiceDSP` slot 9 at `0xC32824` with `SoundPlacement=1`,
+  and `cRaceResults` slot 16 (`0xC1F87C`), `cSeasonEpisodeSelect` slot 2 (`0xC2101C`) and
+  `cInGameMovieState` slot 1 (`0xBA351C`) with `UnlockAll=1` on the Steam build),
   import table entries (`XInputSetState`, Bink's `BinkOpen`/`BinkWait`/`BinkDoFrame`, FMOD's
   `Event::start` with `OpponentEngines=1` (default), `PhotoMode=1` or `Log=1`, `ChannelGroup::setVolume`
   with `OpponentEngines=1`, `PhotoMode=1` or `Log=1`, `System::createDSP` with `SoundPlacement=1`,
@@ -771,8 +773,13 @@ Why glimpse_fix stays away from it:
 What glimpse_fix does instead: everything the Steam version already ships but keeps locked can be
 unlocked through the game's own switches, without code changes: all tracks, modes and cars
 (`UnlockAll`), the PC cheat code extras including the Expressway track (`BonusContent`) and all
-achievements and decals (`UnlockDecals`). Using the pack is your choice, but please reproduce
-problems without it before reporting them.
+achievements and decals (`UnlockDecals`). On the Steam build (not the Russian depot), `UnlockAll=1`
+also hooks `cRaceResults` slot 16 (`0x00C1F87C`), `cSeasonEpisodeSelect` slot 2 (`0x00C2101C`),
+and `cInGameMovieState` slot 1 (`0x00BA351C`) so finishing a career episode's Elite Race opens the
+episode-unlock screen against the profile's real episode state and keeps `0x00D6FBA0` cleared until
+the movie state begins (without wrapping `cSeasonEpisodeSelect::OnInput`), instead of skipping the
+screen and soft-locking on the missing `NT_Episode1.bik` movie. Using the pack is your choice, but
+please reproduce problems without it before reporting them.
 
 ## Known limitations in detail
 
@@ -879,6 +886,8 @@ the Russian build's place from `src/build_ru.inc`.
 | `0x00D389E0`, `0x00D389E4` | Tweakable "Sectors/Streaming Memory Pool MB" (57), read on level load (`0x7C654F`); its record (vtable `0xBB2498`, +4 variable) |
 | `0x00D66B28` | `cInGameResources`: +0xE4 `cGameLogic` (+0x18 player count, +0x1C players); player +0xE8 `cPowerBar` (+0x2C output, +8 power 0–100), +0xAC `cVehicleState` (+0x40 vehicles, +4 + i×4); vehicle +0x584 chassis `hkpRigidBody` (+0x100 forward, +0x110 position, +0x1A0 velocity) |
 | `0x00D6FC54`, `0x00D6FBA0`, `0x00D7D978`, `0x00D6F8F0` | UI/All Gamemodes / Episodes / Events / Vehicles Unlocked |
+| `0x00D64E40` | `cSeasonManager`: +0 `cSeason` (+0x38 count 12, +0x3C episodes, each +0x80 unlock order `-1` when locked), +8 in season, +0xC current episode (0–11), +0x10 current event, +0x16 episode just completed, +0x20 season completed |
+| `0x00C1F87C`, `0x00C2101C`, `0x00BA351C` | `UnlockAll=1` career episode progression vtable slots (Steam build only): `cRaceResults` slot 16 (`0x801EC0`) suspends `0x00D6FBA0` on season episode completion and `cSeasonEpisodeSelect` slot 2 (`0x80BEB0`) holds it cleared until `cInGameMovieState` slot 1 (`0x417370`) restores it (or `ApplyUnlocks` restores it once the season manager no longer reports an episode completion), leaving `cSeasonEpisodeSelect::OnInput` unwrapped; `cInGameMovieState` slot 1 also skips a missing `NT_Episode%d.bik` (only `NT_Episode2..12.bik` exist) if all 12 episodes are already unlocked in the save |
 | `0x00D6C49C` | 10 `PCcheat;…` switches, 8 bytes apart (Cobretti SlipStream, Expressway = Downtown B, branded cars, Euro livery) |
 | `0x00D8B368`, `0x00D82788`, `0x00D9AFCC` | Disable Powerplay Visibility / Sector Visibility / Visibility Map |
 | `0x00D8B384` | Powerplay draw distance records (name +0x10, distance +0x90) |
