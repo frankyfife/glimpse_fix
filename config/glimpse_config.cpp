@@ -187,6 +187,7 @@ static Option kOptions[] = {
     { "DLC", "Tracks", BOOL_OPT, "DLC tracks Quarry and Minepit Park (experimental)", "EXPERIMENTAL: Quarry and Minepit Park (Survival At The Rock's Survival track) get track numbers, so quick play loads them; Minepit Park brings the split screen mode Survival Race. Needs Overlays=1 and the converted tracks in glimpse_dlc. Off with Online over Steam unless the option below is on; not for the game's own LAN mode with players who lack the tracks.", "0" },
     { "DLC", "Music", BOOL_OPT, "  DLC race music on Quarry", "In races on Quarry the DLC package's own race music plays, as on the Xbox 360; Minepit Park keeps the game's music. Off = the game's own race music on Quarry too. Needs the DLC overlays and the DLC tracks (both above) built with the track's music (\"Set up DLC\" does that).", "1" },
     { "DLC", "TracksOnline", BOOL_OPT, "DLC track also online", "The DLC tracks also with Online over Steam. The game sends only the track's number, so you then see and join only the LAN games of players with the same DLC tracks (same track pack and fix version), and they yours; the in-game banner says when a game is not shown. Players without DLC tracks play with each other as before.", "0" },
+    { "DLC", "PersonalBests", BOOL_OPT, "Original DLC personal bests", "Save local bests for the original Xbox 360 DLC events in your normal profile and show solo bests on the Quick Play track card. Quarry Race uses three laps. Deadline uses the original countdown and pickup layout. Steam build only (not the Russian depot).", "0" },
     // page "Deadline mode" (PageOf): the DLC game mode
     { "DLC", "Modes", BOOL_OPT, "Deadline game mode (experimental)", "EXPERIMENTAL: opens the entry of the DLC game mode Deadline (a countdown time trial) in quick play; nothing else is unlocked. Single player. Also shows Survival Race's own quick play movie (the mode itself comes with the DLC tracks). Needs the converted DLC (page DLC), built with the mode (\"Set up DLC\" does that).", "0" },
     { "DLC", "Pickups", BOOL_OPT, "  Deadline pickups (experimental)", "EXPERIMENTAL: Deadline's time pickups as on the Xbox 360: its hexagonal tokens (from your own DLC; plain cubes without it) and its HUD: the timer turns cyan while the clock stands, \"+0.5s\" / \"+2.0s\" at the top and the pickup sounds. The texts are glimpse_fix's own wording; the official ones are in the Xbox title update, not in the DLC.", "0" },
@@ -649,6 +650,7 @@ static void UpdateEnables()
         { "FriendsOnly", IsOn("SteamLAN") }, { "LobbyName", IsOn("SteamLAN") && !IsOn("FriendsOnly") },
         { "DumpWatchPS", IsOn("Log") },
         { "Cars", IsOn("Overlays") }, { "CarsCareer", IsOn("Overlays") && IsOn("Cars") }, { "Modes", IsOn("Overlays") }, { "Pickups", IsOn("Overlays") && IsOn("Modes") },
+        { "PersonalBests", IsOn("Overlays") },
         { "PickupVignette", IsOn("Overlays") && IsOn("Modes") && IsOn("Pickups") },
         { "DeadlineBonus", IsOn("Overlays") && IsOn("Modes") && !IsOn("Pickups") },
         { "Tracks", IsOn("Overlays") }, { "TracksOnline", IsOn("Overlays") && IsOn("Tracks") },

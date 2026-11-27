@@ -148,9 +148,9 @@ the only writer of the screen's time text +0x814). No data file can change the k
 screen, offline; the event objectives screen sets 8 again, so the event objectives and race end screens' enter
 slots are wrapped as well, see "Race end screen, finished race" below): the end screen
 shows a time without a position (as the Xbox for its kind 0xB, 0x882DA1D0), the results list the times under the
-Time Trial icon; the DLL shows both as the time left, as TU4 does (see "Rival standings"). The kind is read only by the pre-race and end screens; the best time lookup (key
-`<track>_<sub>_TimeTrialPlus`) finds nothing and saves nothing. When the clock runs out the player is marked as not
-finished with the game's own flags: the Disqualified record (record 12 of the record collection, logic id
+Time Trial icon. The DLL shows time left on both screens, as TU4 does (see "Rival standings"). With
+`[DLC] PersonalBests=1`, an eligible run also updates the player's local record. When the clock runs out,
+the game marks the player DNF using these flags: the Disqualified record (record 12 of the record collection, logic id
 `[0xD03C78]` = 0, output +0x34 = the cRecordInt at cPlayerStateOutput +0xC; cPlayerState only ever writes 1 there,
 its reset 0x43E770 writes 0 on a restart), so 0x799E50 calls 0x807730 as disqualified: the time text is emptied, no
 best time check; and cEndGame's output +0xA (set by the game for the online modes, cleared by the reset 0x442520),
@@ -190,11 +190,11 @@ The PC (`src/dlcrivals.cpp`, `src/dlcpickups.cpp`; data writes, calls of the gam
   builds the texts (0x802420) and shows them (0x801500); once per finished race (cEndGame output +9). A
   disqualified row (the clock ran out) gets time 0 and the row's DNF flag (+0x323): TEXT_DNF, as TU4's row
   (0x882E8E60) when the time left is 0. The championship gate applies only with the career flag `[0xD64E40]+8`. The rows' order comes from their position records and stays.
-- Nothing is saved: 0x802870 offers only the selected (local player's) row to 0x795B60, which writes only for a key
-  0x788C40 finds among the leaderboards of `UI/Network/leaderboard_def.xml` (169, none `..._TIMETRIALPLUS`), and the
-  best time lookups (0x795E10) find nothing. 0x7D5C40 and the rows only touch the race info and the in-race
-  records; the career branches of 0x803400 (0x773F50) and 0x7D5D70 need the career flag `[0xD64E40]+8`, which quick
-  play does not set.
+- The standings and the persistent best use different game data. 0x7D5C40 updates race info in memory.
+  `[DLC] PersonalBests=1` saves the local player's best for the original countdown and pickup layout
+  using the native profile record table. The Quick Play track card and the race HUD show that
+  best as time remaining. See
+  [Original DLC personal bests](../../../docs/TECHNICAL.md#original-dlc-personal-bests-steam-build-385319).
 
 ### Mode slot and quick-play movie
 

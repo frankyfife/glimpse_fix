@@ -922,3 +922,79 @@ the Russian build's place from `src/build_ru.inc`.
 
 Actions: `0x29` throttle, `0x2A` brake, `0x1D`–`0x2C` the 16 console buttons, `0x03`–`0x06` menu
 up/down/left/right, `0x0A`–`0x0D` menu Y/A/X/B.
+
+## Original DLC personal bests (Steam build 385319)
+
+`[DLC] PersonalBests=1` enables the local catalogue below. The Xbox base
+and Steam base catalogues have 40 boards. The table has space for 100 realized
+records. The 18 extra definitions do not reserve rows.
+
+| Xbox source | Track keys | Mode suffixes | Score |
+|---|---|---|---|
+| Deadline Pack | `AIRPORT_TEST_03_A`, `DOCKS_A/B/C`, `DOWNTOWN_A/B/C`, `GRAVEYARD_A/B`, `POWERPLANT_A/B` | `TIMETRIALPLUS` | Time |
+| Onslaught | `QUARRY_A` | `QUICKRACE`, `TIMETRIAL`, `HELICOPTERREVENGE`, `TIMETRIALPLUS` | Time |
+| Onslaught | `QUARRY_A` | `HELICOPTERSURVIVAL` | Points |
+| Survival At The Rock | `NEM_QUARRY_A` | `NEMESIS`, `NEMESISMULTI` | Points |
+
+**Confirmed from local data.** The three packs' loose leaderboard definitions
+supply the keys and score types. The converted TrackFiltration gives Quarry the
+ordinary Race, Detonator, Air Strike and Air Revenge rules. Onslaught specifies
+three laps for Race. The DLL checks the actual target in cLaps output +0xC.
+The PC converts Deadline to a single-player countdown Time Trial with an
+implementation of the TU4 pickup logic. Each eligible Deadline track must have
+the original pickup bytes and start countdown. An increased start or
+pickups-disabled run can still finish under its own rules. SteamLAN with
+`TracksOnline=1` and matching DLC supports multiplayer Quarry Race and Minepit
+Park Survival. Original LAN uses the same committed multiplayer mode key. The
+local viewport's car ID comes from setup +0xD0. The Xbox DLC catalogues contain
+no Elimination, King of the Air or Survival Race boards. The PC conversion
+exposes Survival Race in split screen. The single-viewport board eligibility
+keeps split-screen results out of the native record table. DLC conversion
+continues to exclude the Xbox network leaderboard XML.
+
+**Confirmed from the Xbox TU4 image.** Its results handler writes
+`100000000 - clockUsedCentiseconds` at 0x882E6768–0x882E6778. The writer at
+0x8848CF38 keeps the unsigned maximum of the old and new score. HUD code at
+0x8825BE38 decodes clock used and displays the difference from the initial
+countdown. The Quick Play track-card updater at 0x882948E0 reads a saved record
+using the selected track, subtrack and game mode (0x8827C578). It formats elapsed
+time, grouped points or Deadline time remaining before the card's selected
+animation (0x88294FBC). See [TU4 Deadline rules](../tools/dlc/mode/TU4_RULES.md).
+
+**Steam implementation.** cRaceResults vtable 0xC1F83C slot 3 wraps 0x802AF0.
+The hook checks the same pending and populated flags as 0x802B69–0x802B9D,
+matches the local viewport against both the result's car ID and its native record
+collection pointer, and rejects DNF.
+Deadline's existing results display converts the cRecordTime to time left.
+The writer inverts that conversion only for a converted record in the current
+race. The rest of the native update and autosave runs through the original
+function. The hook wraps LapSelect's update when both features are active and
+independently checks the actual Quarry lap count.
+
+The local catalogue uses the native case-sensitive board hash from 0x530450
+and stores ordinary rows in the table at `[0xD64E38]+0x2E0`. It bypasses the
+network catalogue and shares the native serializer at 0x419DC0/0x419F30. The
+four written fields are hash +0, 64-bit score +0x30, and the two validity flags
++0x38 and +0x1658. A free row needs both zero hash and zero score and both
+invalid flags. Existing rows are compared by score. Registered PC boards own
+their hashes. The save contains the same `LH%d` and `RS%d` fields in all
+configurations. There is no extension in Controls.
+
+The pre-render cRaceEnd hook at vtable 0xC208DC slot 2 (0x808600) sets the
+native personal-best flag when a single-player finish beats an existing record. The Deadline racing HUD
+uses the game's `TEXT_BEST` text and time element through the existing DialsInfo
+setters 0x560600 and 0x560570. The INI switch and PatchMask bit 0x10000000 gate
+the feature. The integration checks the Steam signatures before enabling
+writes.
+
+The solo Quick Play track card reads that same table. The existing DLC track
+list wrapper (vtable 0xBB224C slot 1, 0x485C30) matches the selected item to the
+game's board key builder 0x485A70 and handles the selected byte on the
+`default` card widget. It uses the native track and mode lock readers 0x4851C0
+and 0x479670 (tail call 0x486F40) and the NEW badge check 0x772CB0, whose
+comparison uses 0x530970, 0x530640 and 0x5312F0. Within that item update, the
+existing GFxMovieRoot Invoke hook (vtable 0xC41CF4 slot 18, also used
+by SteamLAN) supplies the text and visibility arguments for the same movie's
+`PlaySelectedAnim` at 0x486225. The update is synchronous through 0x536AC0.
+Deadline uses the original countdown and requires the original pickup data.
+The menu issues no record writes and uses the game's personal-best label.

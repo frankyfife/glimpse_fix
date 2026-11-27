@@ -648,7 +648,6 @@ bool DlcQpInstallMovies()
 // data write into the freshly built list; the next rebuild locks them again and the next update opens them again),
 // and the movie context for id 21 is set (above). Every other track keeps the game's own state; nothing is written
 // to the profile.
-typedef void(__thiscall* QpItemUpdate_t)(void* self, DWORD index, DWORD selected, DWORD widget);
 static void** const kQpItemUpdateSlot = (void**)0x00BB2250;  // vtable 0xBB224C slot 1
 static QpItemUpdate_t s_origQpItemUpdate;
 static bool s_unlockLogged[kNumDlcTracks];
@@ -696,29 +695,24 @@ static void UnlockDlcRecords(const BYTE* self, DWORD index, DWORD selected, DWOR
 static void __fastcall Hook_QpItemUpdate(void* self, void*, DWORD index, DWORD selected, DWORD widget)
 {
     s_qpContext21 = -1;
-    UnlockDlcRecords((const BYTE*)self, index, selected, widget);
-    s_origQpItemUpdate(self, index, selected, widget);
+    if (s_registered) UnlockDlcRecords((const BYTE*)self, index, selected, widget);
+    DlcRecordsUpdateTrack(s_origQpItemUpdate, self, index, selected, widget);
     s_qpContext21 = -1;
 }
 
-static void InstallTrackUnlock()
+bool DlcInstallTrackListHook()
 {
+    if (s_origQpItemUpdate) return true;
     __try {
         if ((DWORD)kQpItemUpdateSlot[-2] != 0x00C7A3C0 || (DWORD)kQpItemUpdateSlot[0] != 0x00485C30 ||
-            memcmp((const void*)0x00485C30, "\x6A\xFF\x68\x06\x3D\xB3\x00", 7)) {
-            Log("DLC tracks: quick play track list not as expected, the DLC tracks stay locked there unless UnlockAll=1");
-            return;
-        }
+            !BytesMatch((void*)0x00485C30, "6AFF68063DB300")) return false;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return;
+        return false;
     }
-    DWORD old;
-    if (!VirtualProtect(kQpItemUpdateSlot, 4, PAGE_READWRITE, &old)) return;
-    // the original is stored before the slot points at the hook (as iohook.cpp's Swap does)
     s_origQpItemUpdate = (QpItemUpdate_t)*kQpItemUpdateSlot;
-    InterlockedExchangePointer(kQpItemUpdateSlot, (void*)Hook_QpItemUpdate);
-    VirtualProtect(kQpItemUpdateSlot, 4, old, &old);
-    Log("DLC tracks: quick play track list hooked (vtable 0xBB224C slot 1), the DLC tracks will be selectable");
+    if (WriteSlot(kQpItemUpdateSlot, (void*)Hook_QpItemUpdate)) return true;
+    s_origQpItemUpdate = NULL;
+    return false;
 }
 
 static void RegisterTracks()
@@ -772,7 +766,10 @@ static void RegisterTracks()
     for (int t = 0; t < kNumDlcTracks; t++)
         if (s_track[t].index >= 0) Log("DLC tracks: %s registered as track %d", kDlcTracks[t].name, s_track[t].index);
     if (g_cfg.log) InstallDiagnostics();  // a converted track that fails to load shows where in the log
-    InstallTrackUnlock();
+    if (DlcInstallTrackListHook())
+        Log("DLC tracks: quick play track list hooked (vtable 0xBB224C slot 1), the DLC tracks will be selectable");
+    else
+        Log("DLC tracks: quick play track list not as expected, the DLC tracks stay locked there unless UnlockAll=1");
     DlcQpInstallMovies();
 }
 

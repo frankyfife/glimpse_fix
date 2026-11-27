@@ -136,6 +136,7 @@ static bool s_hooked;
 // race state (game logic thread)
 static void* s_cd;                 // player 1's cCountdown seen last
 static bool s_needEval = true;     // decide again whether this is a Deadline race
+static bool s_lapsHooked;
 static volatile bool s_active;     // a Deadline race with boxes
 static int s_lastState = -1;
 static volatile float s_frozen;    // seconds the clock stays stopped
@@ -166,6 +167,7 @@ static void GradeLoad();           // the "Frozen Time" post presets (below)
 static void GradeFrame(float prev, float now);
 // dlcrivals.cpp: the Xbox's rival standings and the time left on the end screens
 bool RivalsInstall();
+bool DeadlineResultsNow(float* start);
 void RivalsObjectives(BYTE* info);
 void RivalsRaceEnd(BYTE* screen);
 void RivalsRaceStart();
@@ -772,11 +774,20 @@ static void __fastcall Hook_ObjectivesEnter(void* self, void*)
 
 static void __fastcall Hook_RaceEndEnter(void* self, void*)
 {
-    KindForDeadline("race end screen");
+    if (s_resultCode) KindForDeadline("race end screen");
     // the time text as the time left. self is cRaceEnd + 4 (this vtable's COL offset): the game's enter goes back to
     // the object with lea edi, [esi-4] (0x808622), and 0x807730 / 0x8082D0 use +0x808 and +0x814 from there
+    DlcRecordsRaceEnd((BYTE*)self - 4);
     RivalsRaceEnd((BYTE*)self - 4);
     s_origRaceEndEnter(self);
+}
+
+// The record uses the active race, with the original countdown and both timing hooks.
+bool DeadlineRecordRules(const BYTE* setup, int countdown)
+{
+    float start = 0.0f;
+    return s_active && s_lapsHooked && !s_timedOut && Ptr(Resources(), 0x14) == setup &&
+           DeadlineResultsNow(&start) && start == (float)countdown;
 }
 
 // a finished Deadline race on one screen, offline, with the Time Trial kind: the results show the time left of
@@ -817,6 +828,15 @@ static bool SwapEnter(void** vt, DWORD col, const char* cls, DWORD fn, const cha
     VirtualProtect(&vt[2], 4, old, &old);
     return true;
 }
+
+bool InstallDlcRaceEnd()
+{
+    if (s_origRaceEndEnter) return true;
+    return SwapEnter(kRaceEndVt, 0x00C98258, ".?AVcRaceEnd@InGameUI@@", 0x00808600,
+                     "\x83\xEC\x24\x53\x55\x56\x57\x68", 8,
+                     (void*)Hook_RaceEndEnter, &s_origRaceEndEnter);
+}
+
 
 // ---------------------------------------------------------------- Deadline's HUD and sounds, as on the Xbox
 // TU4 (TU4_RULES.md section 3) drives its HUD from the frozen time: 0x882609A8 turns the pickup state into events.
@@ -1191,6 +1211,7 @@ static void __fastcall Hook_CountdownUpdate(void* self, void*, float dt)
     __try {
         if (state == 6) {
             s_startValue = out[2];
+            if (prev != 6 && s_active && s_lapsHooked) DlcRecordsDeadlineHud(res, s_startValue);
             if (s_active) InterlockedIncrement(&s_cdSeq);
             if (s_active && s_frozen > 0.0f && ((const BYTE*)out)[4]) {
                 if (out[3] < before) out[3] = before;  // the clock does not run this frame (Xbox: dt = 0)
@@ -1219,6 +1240,7 @@ static void __fastcall Hook_CountdownReset(void* self, void*, DWORD arg)
     if (IsPlayer1Countdown(self, &player)) {
         s_needEval = true;  // the next update decides about the race and arms the boxes
         s_resetPending = true;
+        s_startValue = 0.0f;
         s_frozen = 0.0f;
         s_timedOut = s_kindLogged = s_endLogged = false;
         for (int i = 0; i < s_count; i++) s_pk[i].collected = 0;
@@ -1281,6 +1303,7 @@ static void LapsInstall()
     s_origLaps = (LapsUpdate_t)kLapsVtable[4];
     InterlockedExchangePointer(&kLapsVtable[4], (void*)Hook_LapsUpdate);
     VirtualProtect(&kLapsVtable[4], 4, old, &old);
+    s_lapsHooked = true;
     Log("DLC pickups: lap timer hooked (vtable 0xBA8DE8 slot 4): the race time stands while the clock is frozen (TU4)");
 }
 
@@ -1574,8 +1597,7 @@ void DlcInstallPickups()
     if (s_resultCode) {
         const bool a = SwapEnter(kObjectivesVt, 0x00C979C8, ".?AVcEventObjectives@InGameUI@@", 0x00806820,
                                  "\x83\xEC\x18\x56\x8B\xF1\x8B\x46\x68", 9, (void*)Hook_ObjectivesEnter, &s_origObjectivesEnter);
-        const bool b = SwapEnter(kRaceEndVt, 0x00C98258, ".?AVcRaceEnd@InGameUI@@", 0x00808600,
-                                 "\x83\xEC\x24\x53\x55\x56\x57\x68", 8, (void*)Hook_RaceEndEnter, &s_origRaceEndEnter);
+        const bool b = InstallDlcRaceEnd();
         Log("DLC modes: Deadline's race kind kept at the screens: event objectives %s, race end %s (vtables 0xC201E4 / "
             "0xC208DC slot 2)", a ? "hooked" : "NOT as expected", b ? "hooked" : "NOT as expected");
     }

@@ -31,7 +31,7 @@ static void Describe(const GFxValue* v, char* out, size_t size)
         switch (v->type & 0x0F) {
         case 0: strcpy_s(out, size, "undefined"); break;
         case 1: strcpy_s(out, size, "null"); break;
-        case 2: strcpy_s(out, size, *(const BYTE*)&v->num ? "true" : "false"); break;
+        case GFX_BOOL: strcpy_s(out, size, v->boolean ? "true" : "false"); break;
         case GFX_NUMBER: _snprintf_s(out, size, _TRUNCATE, "%g", v->num); break;
         case GFX_STRING: _snprintf_s(out, size, _TRUNCATE, "\"%.80s\"", v->str ? v->str : ""); break;
         case 5: _snprintf_s(out, size, _TRUNCATE, "L\"%.80ls\"", v->str ? (const wchar_t*)v->str : L""); break;
@@ -72,9 +72,10 @@ static bool __fastcall Hook_Invoke(void* movie, void*, const char* path, GFxValu
 {
     GFxValue mine[8];
     __try {
+        if (DlcTrackBestArgs(movie, path, args, count, mine)) args = mine;
         Note(movie, "invoke", path, args, count);
         LapMenuInvoke(movie, path, args, count);
-        if (LapMenuInvokeArgs(movie, path, args, count, mine)) args = mine;
+        if (args != mine && LapMenuInvokeArgs(movie, path, args, count, mine)) args = mine;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
     }
     return s_invoke(movie, path, result, args, count);
@@ -114,7 +115,7 @@ static void** const kMovieVtable = (void**)0x00C41CF4;
 
 bool MenuHookReady()
 {
-    if (CurrentBuild() != BUILD_STEAM || g_cfg.steamLan) return false;
+    if (CurrentBuild() != BUILD_STEAM || (g_cfg.steamLan && (g_cfg.patchMask & PATCH_ONLINE))) return false;
     if (s_installed) return true;
     __try {
         return ClassIs(kMovieVtable, 0x00CA2478, ".?AVGFxMovieRoot@@") &&
@@ -126,9 +127,9 @@ bool MenuHookReady()
     }
 }
 
-void InstallMenuHook(bool forLaps)
+void InstallMenuHook(bool forLaps, bool forTrackBests)
 {
-    if (s_installed || !(g_cfg.uiLog || forLaps)) return;
+    if (s_installed || !(g_cfg.uiLog || forLaps || forTrackBests)) return;
     if (!MenuHookReady()) {
         Log("ui: Scaleform movie hooks unavailable on this build or configuration");
         return;

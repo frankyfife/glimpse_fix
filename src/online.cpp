@@ -1951,7 +1951,14 @@ static bool __fastcall Hook_GfxInvoke(void* movie, void*, const char* path, GFxV
                                       unsigned count)
 {
     NoteTitle(path, args, count);
+    GFxValue best[2];
+    if (DlcTrackBestArgs(movie, path, args, count, best)) args = best;
     return s_origInvoke(movie, path, result, args, count);
+}
+
+bool OnlineMenuHookInstalled()
+{
+    return s_origInvoke != NULL;
 }
 
 static void InstallUiHook()
@@ -1962,8 +1969,11 @@ static void InstallUiHook()
         return;
     }
     s_origInvoke = (GFxInvoke_t)vt[18];
-    void* hook = (void*)Hook_GfxInvoke;
-    WriteMemory(&vt[18], &hook, sizeof(hook));
+    if (!WriteSlot(&vt[18], (void*)Hook_GfxInvoke)) {
+        s_origInvoke = NULL;
+        Log("online: Scaleform Invoke slot could not be written");
+        return;
+    }
     Log("online: the game mode is read from the lobby screen");
 }
 

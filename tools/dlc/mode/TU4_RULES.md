@@ -132,8 +132,14 @@ Details (read 2026-11-21 for the PC HUD parity, `README.md` "Deadline's HUD"):
   the rows 0x882E5F78 print `(int)Countdown * 100 - value` (`TEXT_DNF` when not below); the end screen hides the
   position for 0xB as for 1 (0x882DA1D0). A row's DNF also when the countdown output's time left <= 0
   (0x882E8E60).
-- Best time line 0x8825BBF8 (mode 8): stored value S, shown as `Countdown*100 - (1e8 - S)` when
-  0 < 1e8 - S < Countdown*100 (*inferred*: leaderboard stores 1e8 - remaining hundredths, lower = better).
+- **Best time**: the results writer at 0x882E6588 requires one viewport (0x882E66B0), reads the selected
+  row's cRecordTime hundredths through 0x88375AD8, and computes `score = 100000000 - clock used` at
+  0x882E6768. It skips rows with the DNF flag at +0x323. The native writer at 0x8848CF38 keeps the higher
+  unsigned score (+0x30), or takes a free row when this board has no record. The HUD reader at 0x8825BBF8
+  takes the mode-8 branch at 0x8825BE38. It decodes `used = 100000000 - score`, verifies
+  `0 < used < (int)Countdown * 100`, and shows `(int)Countdown * 100 - used`. The finish card at
+  0x882D2714 compares the new clock used against that decoded old time. The DNF builder at 0x882E8FC8
+  marks the row DNF when the remaining countdown reaches zero.
 - Restart (0x882499A8) calls the pickup reset 0x882A9DB8: every pickup slot 5 (clear near flag, collected = 0);
   mode 8 re-arms all pickups, other modes hide green/yellow/red (white/black stay). Logic resets: pickup logic
   slot 2 (0x88376640) frozen = penalty = 0 and clears the state; countdown reset 0x88379E10 back to the start value.
@@ -183,8 +189,7 @@ Details (read 2026-11-21 for the PC HUD parity, `README.md` "Deadline's HUD"):
 ## Confidence and open points
 
 High: patch, tweakable addresses/defaults, freeze formula, countdown stop, HUD/sound event mapping, loader file
-formats, vehicle DB 256, redirect order. Medium: collision box size (VMX128), rival/best-time meaning of the stored
-value. Answered since: the PC's vehicle DB also holds 256 entries; the race value compared with 3.0 in the hint
+formats, vehicle DB 256, redirect order. The personal-best writer and display are confirmed by the instruction trace above. Medium: collision box size (VMX128). Answered since: the PC's vehicle DB also holds 256 entries; the race value compared with 3.0 in the hint
 logic is the run's racing time in seconds (the hints come after 3 s of racing; `src\dlcpickups.cpp` HudFrame);
 the post presets are implemented as *Frozen Time Heavy* for a freeze from a drift hit and *Frozen Time Subtle* for
 a plain one (`[DLC] PickupVignette`). Open: who raises the group show/hide events; hint 1 display; car-select UI

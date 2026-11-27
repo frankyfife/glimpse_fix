@@ -37,10 +37,8 @@
 //   before the results screen builds its texts from them (cRaceResults vtable 0xC1F83C slot 2, 0x802E10, which
 //   calls 0x802420 and 0x801500), once per finished race. The rows keep their order (they are sorted by the
 //   position records).
-// Nothing is saved: the personal best write (0x802870 -> 0x795B60) needs a leaderboard named
-// <track>_<sub>_timetrialplus in UI/Network/leaderboard_def.xml (0x788C40: none on the PC), and only the player's
-// own row (0x803400's selected row) is offered to it. Steam build only, every address checked; inert outside a
-// Deadline race on one screen offline.
+// The stock writer requires a network catalogue key. dlcrecords.cpp handles eligible local records separately.
+// Steam build only, every address checked; inert outside a Deadline race on one screen offline.
 #include "common.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -111,6 +109,7 @@ static Rival s_rivals[8];
 static int s_rivalCount;
 static float s_countdown;  // TimeTrialPlusCountdown of the track
 static char s_table[96];   // "<track>/<sub>" of the table ("" none)
+static const BYTE* s_convertedTime[8];
 static bool s_rowsDone;    // this race's result rows show the time left
 static bool s_loggedSkip[4];
 
@@ -391,6 +390,7 @@ static void ResultsTimeLeft(BYTE* screen)
             const unsigned __int64 used = *(const unsigned __int64*)(tr + 0x10);
             const unsigned __int64 left = used < cd ? cd - used : 0;
             kTimeSet(tr, (DWORD)left, (DWORD)(left >> 32));
+            s_convertedTime[i] = tr;
             n++;
         }
         Log("DLC modes: Deadline: %d result rows show the time left (of %.1f s) or DNF", n, start);
@@ -405,7 +405,19 @@ static void __fastcall Hook_ResultsEnter(void* self, void*)
 }
 
 // a new or restarted race
-void RivalsRaceStart() { s_rowsDone = false; }
+void RivalsRaceStart()
+{
+    s_rowsDone = false;
+    memset(s_convertedTime, 0, sizeof(s_convertedTime));
+    DlcRecordsRaceStart();
+}
+
+bool DeadlineRowShowsTimeLeft(const BYTE* time)
+{
+    for (const BYTE* row : s_convertedTime)
+        if (row == time) return true;
+    return false;
+}
 
 // from DlcInstallPickups (Steam build, Modes=1 or Pickups=1, the mode in the merged overlay)
 bool RivalsInstall()

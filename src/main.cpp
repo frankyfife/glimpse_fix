@@ -245,6 +245,7 @@ static void LoadConfig()
     g_cfg.dlcTracksOnline = IniBool("DLC", "TracksOnline", false);
     g_cfg.dlcMusic = IniBool("DLC", "Music", true);
     g_cfg.dlcModes = IniBool("DLC", "Modes", false);
+    g_cfg.dlcPersonalBests = IniBool("DLC", "PersonalBests", false);
     g_cfg.dlcPickups = IniBool("DLC", "Pickups", false);
     g_cfg.pickupVignette = IniBool("DLC", "PickupVignette", true);
     g_cfg.deadlineBonus = IniFloat("DLC", "DeadlineBonus", 50.0f, 0.0f, 300.0f);
@@ -375,6 +376,7 @@ extern "C" HRESULT WINAPI Proxy_DirectInput8Create(HINSTANCE inst, DWORD version
         if (g_cfg.dlcTracks) DlcRegisterTracks();
         DlcInstallModes();  // [DLC] Modes: same moment as DlcRegisterTracks, checks build and overlay itself
         DlcInstallPickups();  // [DLC] Pickups / DeadlineBonus: the same, checks build and overlay itself
+        DlcInstallRecords();
         DlcInstallCars();   // [DLC] Cars: the same, checks build, UnlockAll and overlay itself
     }
     if (riid == IID_IDirectInput8A && PadsWrapped())

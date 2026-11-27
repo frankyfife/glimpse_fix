@@ -62,6 +62,7 @@ struct Config {
     bool  dlcMusic;          // Quarry plays the DLC's race music DLC3_Music in Music/Music's place (dlcmusic.cpp)
     bool  dlcModes;          // experimental: the converted DLC game mode Deadline (TimeTrialPlus) opened in quick play (dlcmode.cpp)
     bool  dlcPickups;        // experimental: Deadline's green pickup boxes that stop the countdown (dlcpickups.cpp)
+    bool  dlcPersonalBests;  // original DLC personal bests in native TrackRecords
     bool  pickupVignette;    // with dlcPickups: a cyan glow along the screen's edges while the clock is stopped
     float deadlineBonus;     // seconds added to Deadline's start times without the boxes (Modes=1, Pickups=0)
     bool  dlcCars;           // experimental: the overlay's DLC cars listed in the front-end car select without UnlockAll (dlccars.cpp)
@@ -124,6 +125,7 @@ enum PatchBits {
     PATCH_UNLOCK = 0x4000, PATCH_SAVEDIAG = 0x8000, PATCH_ROUTEMARKER = 0x10000, PATCH_BOOST = 0x20000, PATCH_AIBOOST = 0x40000, PATCH_FLARES = 0x80000, PATCH_INTRO = 0x100000, PATCH_CAMERA = 0x200000,
     PATCH_ONLINE = 0x400000, PATCH_RACEEND = 0x800000, PATCH_LAPS = 0x1000000,
     PATCH_POWERPLAY_FLANGER = 0x2000000, PATCH_HUD = 0x4000000, PATCH_TEXLOAD = 0x8000000,
+    PATCH_DLC_RECORDS = 0x10000000,
     PATCH_ALL = 0xFFFFFFFF
 };
 
@@ -292,9 +294,10 @@ struct GFxValue {
     union {
         const char* str;
         double num;
+        BYTE boolean;
     };
 };
-enum { GFX_NUMBER = 3, GFX_STRING = 4, GFX_RESULT_STRING = 0x14 };
+enum { GFX_BOOL = 2, GFX_NUMBER = 3, GFX_STRING = 4, GFX_RESULT_STRING = 0x14 };
 
 typedef bool(__thiscall* GFxInvoke_t)(void* movie, const char* path, GFxValue* result, const GFxValue* args, unsigned count);
 typedef bool(__thiscall* GFxSetVariable_t)(void* movie, const char* path, const GFxValue* value, int setType);
@@ -343,6 +346,17 @@ bool ResidentEntryMatches(const char* path, size_t size, uint32_t crc);
 void DlcInstallModes();    // [DLC] Modes: right after ApplyGamePatches (dlcmode.cpp)
 struct IDirect3DSurface9;
 // dlcpickups.cpp - [DLC] Pickups=1: Deadline's green pickup boxes (stop the countdown)
+void DlcInstallRecords();
+using QpItemUpdate_t = void(__thiscall*)(void* self, DWORD index, DWORD selected, DWORD widget);
+bool DlcInstallTrackListHook();
+void DlcRecordsUpdateTrack(QpItemUpdate_t original, void* self, DWORD index, DWORD selected, DWORD widget);
+bool DlcTrackBestArgs(void* movie, const char* path, const GFxValue* args, unsigned count, GFxValue* out);
+void DlcRecordsRaceStart();
+void DlcRecordsRaceEnd(BYTE* card);
+void DlcRecordsDeadlineHud(const BYTE* resources, float start);
+bool InstallDlcRaceEnd();  // shared by Deadline's result presentation and DLC personal bests
+bool DeadlineRecordRules(const BYTE* setup, int countdown);
+bool DeadlineRowShowsTimeLeft(const BYTE* time);
 void DlcInstallPickups();  // right after DlcInstallModes
 bool PickupsWanted();      // Pickups=1, Steam build, the merged overlay brings the mode (after DlcInstall; decided once)
 void PickupsDeviceCreated(IDirect3DDevice9* dev);
@@ -373,7 +387,8 @@ void HookSoundBanks();         // with the import hooks: System::setFileSystem (
 bool AudioSystemInitHooked();  // true once System::setFileSystem was wrapped so sound-system resets are tracked
 void HookVoiceDspCreation();   // after HookSoundBanks: voice units made with a working read callback
 bool MenuHookReady();
-void InstallMenuHook(bool forLaps = false);
+void InstallMenuHook(bool forLaps = false, bool forTrackBests = false);
+bool OnlineMenuHookInstalled();
 void RemoveLapMenuHook();         // the game's Scaleform Invoke / SetVariable calls (lap choice; UiLog=1: logged)
 bool MenuHookInstalled();       // the Scaleform slots are ours
 bool UiSetText(void* movie, const char* path, const char* text);  // SetVariable past the hook
