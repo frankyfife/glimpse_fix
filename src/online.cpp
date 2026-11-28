@@ -898,18 +898,24 @@ static bool Create()
 // free camera in a session and does not hold the world still (camera.cpp), since the others race on.
 // Outside a session the own INI applies.
 
+// laps: Race's laps (the host's LapSelect pick, 0 = the game's). The game works the count out on every PC itself
+// (cLaps::Reset, 0x43FFA5: the track's own count, or the lap override) and sends none, so all must use the same;
+// lap_menu.cpp sets it for each car's reset. The game caps a network race at 8 (0x43FFCB). Last in the text: a
+// version without it reads the 14 fields before and ignores it (and then reports other settings, see SyncRules).
 struct Rules {
     bool boost = false, powerFill = false, aiBoost = false, aiUnlimited = false, aiStraight = true, aiChaos = false;
     bool handbrake = false;
-    int aiLevel = 2, handbrakeMode = 1;
+    int aiLevel = 2, handbrakeMode = 1, laps = 0;
     float boostAccel = 15, boostMax = 90, wreckTime = 0, handbrakeStrength = 15, handbrakeDrift = 2.5f;
 };
 
+static const int kNetworkMaxLaps = 8;  // the game's cap for a network race (0x43FFD5)
+
 static void Encode(const Rules& r, char* out, size_t n)
 {
-    _snprintf_s(out, n, _TRUNCATE, "b=%d;ba=%g;bm=%g;p=%d;a=%d;al=%d;au=%d;as=%d;ac=%d;w=%g;h=%d;hm=%d;hs=%g;hd=%g", r.boost,
+    _snprintf_s(out, n, _TRUNCATE, "b=%d;ba=%g;bm=%g;p=%d;a=%d;al=%d;au=%d;as=%d;ac=%d;w=%g;h=%d;hm=%d;hs=%g;hd=%g;l=%d", r.boost,
                 r.boostAccel, r.boostMax, r.powerFill, r.aiBoost, r.aiLevel, r.aiUnlimited, r.aiStraight, r.aiChaos, r.wreckTime,
-                r.handbrake, r.handbrakeMode, r.handbrakeStrength, r.handbrakeDrift);
+                r.handbrake, r.handbrakeMode, r.handbrakeStrength, r.handbrakeDrift, r.laps);
 }
 
 static bool Decode(const char* s, Rules* r)
@@ -917,10 +923,13 @@ static bool Decode(const char* s, Rules* r)
     if (!s || !*s) return false;
     Rules x;
     int b, p, a, au, as, ac, h;
-    if (sscanf_s(s, "b=%d;ba=%g;bm=%g;p=%d;a=%d;al=%d;au=%d;as=%d;ac=%d;w=%g;h=%d;hm=%d;hs=%g;hd=%g", &b, &x.boostAccel,
-                 &x.boostMax, &p, &a, &x.aiLevel, &au, &as, &ac, &x.wreckTime, &h, &x.handbrakeMode, &x.handbrakeStrength,
-                 &x.handbrakeDrift) != 14)
-        return false;
+    // 14 fields from a version before the laps (they stay the game's), 15 with them
+    const int got = sscanf_s(s, "b=%d;ba=%g;bm=%g;p=%d;a=%d;al=%d;au=%d;as=%d;ac=%d;w=%g;h=%d;hm=%d;hs=%g;hd=%g;l=%d", &b,
+                             &x.boostAccel, &x.boostMax, &p, &a, &x.aiLevel, &au, &as, &ac, &x.wreckTime, &h, &x.handbrakeMode,
+                             &x.handbrakeStrength, &x.handbrakeDrift, &x.laps);
+    if (got != 14 && got != 15) return false;
+    if (got == 14) x.laps = 0;
+    if (x.laps < 0 || x.laps > 16) x.laps = 0;
     x.handbrake = h != 0;
     if (x.handbrakeMode != 2) x.handbrakeMode = 1;
     x.handbrakeStrength = x.handbrakeStrength < 0 ? 0 : x.handbrakeStrength > 40 ? 40 : x.handbrakeStrength;
@@ -946,9 +955,11 @@ static void Describe(const Rules& r, char* out, size_t n)
     }
     char wreck[24] = "as the game";
     if (r.wreckTime > 0) _snprintf_s(wreck, _TRUNCATE, "%.0f s", r.wreckTime);
-    _snprintf_s(out, n, _TRUNCATE, "Boost %s, handbrake %s, power bar fill %s, AI boost %s, wreck time %s",
+    char laps[24] = "as the game";
+    if (r.laps > 0) _snprintf_s(laps, _TRUNCATE, "%d", r.laps > kNetworkMaxLaps ? kNetworkMaxLaps : r.laps);
+    _snprintf_s(out, n, _TRUNCATE, "Boost %s, handbrake %s, power bar fill %s, AI boost %s, wreck time %s, Race laps %s",
                 r.boost ? "ON" : "off", r.handbrake ? (r.handbrakeMode == 2 ? "ON (brake)" : "ON") : "off",
-                r.powerFill ? "ON" : "off", ai, wreck);
+                r.powerFill ? "ON" : "off", ai, wreck, laps);
 }
 
 static Rules OwnRules()
@@ -968,10 +979,12 @@ static Rules OwnRules()
     r.handbrakeMode = g_cfg.handbrakeMode;
     r.handbrakeStrength = g_cfg.handbrakeStrength;
     r.handbrakeDrift = g_cfg.handbrakeDrift;
+    r.laps = HostLaps();
     return r;
 }
 
 static Rules s_own;                 // from this player's INI, taken at start
+static volatile bool s_lapsHeld;    // a member cannot take the lap pick (glimpse_lapok): the game's laps for all
 static bool s_ownPhotoMode;
 static WORD s_ownHandbrakeButton;    // from the INI; ApplyRules clears it when it clashes with the boost
 static Rules s_lobbyRules;          // the session's: the host's, else the lobby owner's (online thread)
@@ -995,6 +1008,7 @@ static void ApplyRules(const Rules& r, bool photoMode)
     g_cfg.handbrakeMode = r.handbrakeMode;
     g_cfg.handbrakeStrength = r.handbrakeStrength;
     g_cfg.handbrakeDrift = r.handbrakeDrift;
+    g_cfg.sessionLaps = r.laps;
     // this player's own buttons: when the host allows both and they are the same, the handbrake gets none
     // (as at the start, main.cpp)
     g_cfg.handbrakeButton = r.boost && r.handbrake && s_ownHandbrakeButton == g_cfg.boostButton ? 0 : s_ownHandbrakeButton;
@@ -1542,6 +1556,8 @@ static void SyncRules()
             S.SetMemberData(s_mm, s_lobby, "glimpse_dlc", dlc);  // before the version: a member that has it knows ours
         }
         S.SetMemberData(s_mm, s_lobby, "glimpse_ver", GLIMPSE_VERSION);
+        // whether this PC applies the session's laps (lap_menu.cpp's race hooks; not on the Russian depot)
+        S.SetMemberData(s_mm, s_lobby, "glimpse_lapok", LapRaceHooksInstalled() ? "1" : "0");
         reportedSerial = s_lobbySerial;
         reported[0] = reportedOwn[0] = 0;
         strcpy_s(reportedMode, "-");
@@ -1582,11 +1598,14 @@ static void SyncRules()
 
     // the others' reports
     char warning[160] = "";
+    bool lapsBlocked = false;
     for (const Peer& p : peers) {
         char t[20];
         IpText(p.ip, t, sizeof(t));
         const char* ver = S.GetMemberData(s_mm, s_lobby, p.steamID, "glimpse_ver");
         const char* theirs = S.GetMemberData(s_mm, s_lobby, p.steamID, "glimpse_applied");
+        const char* lapok = S.GetMemberData(s_mm, s_lobby, p.steamID, "glimpse_lapok");
+        lapsBlocked |= !lapok || strcmp(lapok, "1") != 0;  // an older version publishes none
         if (ver && *ver && strcmp(ver, GLIMPSE_VERSION)) {
             if (FirstTime(Key(DIAG_IP_CLASH, p.ip, 2))) Log("online: player %s runs glimpse_fix %s, this one %s", t, ver, GLIMPSE_VERSION);
             _snprintf_s(warning, _TRUNCATE, "Note: player %s runs glimpse_fix %s (you: %s)", t, ver, GLIMPSE_VERSION);
@@ -1624,6 +1643,16 @@ static void SyncRules()
         if (differ && !since) differs.push_back(std::make_pair(p.steamID, since = GetTickCount()));
         if (differ && GetTickCount() - since >= 8000)
             _snprintf_s(warning, _TRUNCATE, "WARNING: player %s plays with other settings: %s", t, d);
+    }
+    // the laps go only into a lobby where everybody applies them: a player that keeps the game's laps (an older
+    // version, the Russian depot) would end its race at another lap than the others
+    if (lapsBlocked != s_lapsHeld) {
+        s_lapsHeld = lapsBlocked;
+        if (lapsBlocked && HostLaps())
+            Log("online: a player cannot take a lap pick (older glimpse_fix, the Russian depot, or not known yet): this "
+                "player's pick is held back, the game's laps");
+        else if (!lapsBlocked && HostLaps())
+            Log("online: every player takes a lap pick, this player's (%d) is offered", HostLaps());
     }
     // other DLC tracks: the one warning that says why a game cannot be joined, so it goes before the others
     for (const Peer& p : peers)
@@ -1680,7 +1709,9 @@ void OnlineFrame()
         Log("online: the LAN game ended");
     }
     EnterCriticalSection(&s_showLock);
+    s_own.laps = s_lapsHeld ? 0 : HostLaps();  // the lap choice can change it on the track select (game thread, as here)
     Rules target = active ? (s_lobbyRulesKnown ? s_lobbyRules : Rules()) : s_own;  // all off until the rules are known
+    if (!LapRaceHooksInstalled()) target.laps = 0;  // cannot be applied here: reported as the game's laps
     bool wasActive = s_inSession;
     s_inSession = active;
     LeaveCriticalSection(&s_showLock);
@@ -1951,14 +1982,19 @@ static bool __fastcall Hook_GfxInvoke(void* movie, void*, const char* path, GFxV
                                       unsigned count)
 {
     NoteTitle(path, args, count);
-    GFxValue best[2];
-    if (DlcTrackBestArgs(movie, path, args, count, best)) args = best;
+    GFxValue mine[8];
+    if (DlcTrackBestArgs(movie, path, args, count, mine) || LapMenuInvokeArgs(movie, path, args, count, mine)) args = mine;
     return s_origInvoke(movie, path, result, args, count);
 }
 
 bool OnlineMenuHookInstalled()
 {
     return s_origInvoke != NULL;
+}
+
+void* OnlineInvokeHook()
+{
+    return s_origInvoke ? (void*)Hook_GfxInvoke : NULL;
 }
 
 static void InstallUiHook()

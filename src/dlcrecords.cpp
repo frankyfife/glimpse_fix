@@ -468,7 +468,7 @@ void DlcInstallRecords()
     void** vt = (void**)0x00C1F83C;
     __try {
         if (!ClassIs(vt, 0x00C972C0, ".?AVcRaceResults@InGameUI@@") ||
-            ((DWORD)vt[3] != 0x00802AF0 && !LapMenuInstalled()) ||
+            ((DWORD)vt[3] != 0x00802AF0 && !LapRaceHooksInstalled()) ||
             !BytesMatch((void*)0x00802B69, "8BBEA0040000807F3000742D8B5718") ||
             !BytesMatch((void*)0x00802B97, "8B8EA0040000E8CEFCFFFF") ||
             !BytesMatch((void*)0x0078E270, "8B54240433C081C1D0000000") ||

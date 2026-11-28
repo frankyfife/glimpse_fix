@@ -113,13 +113,17 @@ static bool __fastcall Hook_SetVariable(void* movie, void*, const char* path, co
 
 static void** const kMovieVtable = (void**)0x00C41CF4;
 
+// With SteamLAN, online.cpp's Invoke wrapper holds slot 18 already (it is installed first, game.cpp): it is
+// wrapped in turn, so both see every call (ours first, then online.cpp's, then the game's).
 bool MenuHookReady()
 {
-    if (CurrentBuild() != BUILD_STEAM || (g_cfg.steamLan && (g_cfg.patchMask & PATCH_ONLINE))) return false;
+    if (CurrentBuild() != BUILD_STEAM) return false;
     if (s_installed) return true;
     __try {
+        const DWORD invoke = (DWORD)kMovieVtable[18];
+        const void* online = OnlineInvokeHook();
         return ClassIs(kMovieVtable, 0x00CA2478, ".?AVGFxMovieRoot@@") &&
-               (DWORD)kMovieVtable[18] == 0x0098D2E0 && (DWORD)kMovieVtable[11] == 0x00991010 &&
+               (invoke == 0x0098D2E0 || (online && invoke == (DWORD)online)) && (DWORD)kMovieVtable[11] == 0x00991010 &&
                BytesMatch((void*)0x0098D2E0, "6AFF68906AB50064A100") &&
                BytesMatch((void*)0x00991010, "6AFF68E06EB50064A100");
     } __except (EXCEPTION_EXECUTE_HANDLER) {

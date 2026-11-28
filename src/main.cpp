@@ -265,6 +265,7 @@ static void LoadConfig()
     g_cfg.raceEndTiming = IniBool("Gameplay", "RaceEndTiming", false);
     g_cfg.unlockAll = IniBool("Gameplay", "UnlockAll", false);
     g_cfg.laps = IniInt("Gameplay", "Laps", 0);
+    if (g_cfg.laps < 0 || g_cfg.laps > 16) g_cfg.laps = g_cfg.laps > 16 ? 16 : 0;  // 10 and up: the HUD shows one digit
     if (g_cfg.laps < 0 || g_cfg.laps > 16) g_cfg.laps = 0;
     g_cfg.lapSelect = IniBool("Gameplay", "LapSelect", false);
     g_cfg.bonusContent = IniBool("Gameplay", "BonusContent", false);

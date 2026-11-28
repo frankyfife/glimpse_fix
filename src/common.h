@@ -74,6 +74,7 @@ struct Config {
     bool  unlockAll;         // all tracks, events, episodes, game modes and vehicles selectable
     int   laps;              // laps per race, 0 = as the game
     bool  lapSelect;         // the track select's difficulty button picks the laps
+    int   sessionLaps;       // SteamLAN: the session's laps for Race (the host's, online.cpp), 0 = as the game
     bool  uiLog;             // research: the game's calls into its Scaleform menus ([Debug] UiLog, with Log=1)
     bool  bonusContent;      // the PC cheat code extras: Expressway track, branded cars, liveries
     float wreckTime;         // seconds from a wreck to the respot, 0 = the game's
@@ -389,6 +390,9 @@ void HookVoiceDspCreation();   // after HookSoundBanks: voice units made with a 
 bool MenuHookReady();
 void InstallMenuHook(bool forLaps = false, bool forTrackBests = false);
 bool OnlineMenuHookInstalled();
+void* OnlineInvokeHook();       // online.cpp's Invoke wrapper while it holds the slot, else NULL
+bool LapRaceHooksInstalled();   // lap_menu.cpp wraps cLaps::Reset and cRaceResults::Update (slot 3)
+int HostLaps();                 // the laps this player offers as a SteamLAN host (0 = the game's)
 void RemoveLapMenuHook();         // the game's Scaleform Invoke / SetVariable calls (lap choice; UiLog=1: logged)
 bool MenuHookInstalled();       // the Scaleform slots are ours
 bool UiSetText(void* movie, const char* path, const char* text);  // SetVariable past the hook

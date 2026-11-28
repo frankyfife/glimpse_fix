@@ -1,8 +1,10 @@
 // Laps per race (Steam build): the game's own lap override tweakables, and the lap choice on the track select.
 //
-// LapSelect uses the game's resolved difficulty action on offline Quick Play Race's track select.
-// The count is saved as Laps. cLaps::Reset consumes the choice for the committed track, with the
-// game's override flag and count restored after each reset. Only setups that used changed laps
+// LapSelect uses the game's resolved difficulty action on offline Quick Play Race's track select (one
+// screen or split screen, the same screen class). The count is saved as Laps. cLaps::Reset consumes the
+// choice for the committed track, with the game's override flag and count restored after each reset.
+// In a SteamLAN session the session's laps (the host's pick, online.cpp's rules) are applied the same way
+// to every network Race, on every PC: the game sends no lap count. Only setups that used changed laps
 // receive the results key substitution and finish-card notice. See docs/TECHNICAL.md.
 //
 // The default shown is the track's own count, read from the game's data through the game's own file object
@@ -16,9 +18,16 @@
 
 static BYTE* const kLapOverride = (BYTE*)0x00D6B6B5;  // "Override Default Number of Laps"
 static int* const kLapCount = (int*)0x00D090CC;       // "Number of Laps"
-static const int kMaxLaps = 10;
+// The button goes up to 9: the HUD shows one digit (DialsInfo.gfx's lap counter has a 30 px laps_total_txt, which
+// SetNumLaps writes, right before the closing bracket, and laps_current_txt runs into the "/" with two; the game
+// itself never goes past 8). Laps up to kMaxIniLaps can be set in the INI or the settings program, which say so.
+static const int kMaxLaps = 9;
+static const int kMaxIniLaps = 16;
 
-static bool s_installed;     // all LapSelect hooks are in place
+static bool s_installed;     // all LapSelect hooks are in place (the lap choice on the track select)
+static bool s_raceHooks;     // cLaps::Reset and cRaceResults::Update are wrapped (LapSelect or SteamLAN)
+static bool s_changedNetwork; // s_changedSetup is a SteamLAN race that got the session's laps
+static int s_changedLaps;    // the laps that setup got
 static char s_mode[32];      // the GameMode name of the quick play mode last highlighted (QuickRace, ...)
 static char s_menuEntry[32]; // the main menu entry last highlighted (TEXT_QUICKPLAY, TEXT_SEASON, ...)
 static char s_track[48];     // the track last highlighted on the track select (TEXT_Downtown_A ...)
@@ -59,22 +68,59 @@ static const char* TrackKey(const char* name)
 }
 
 // cRaceSetup can be reused. Match the committed track and the actual race kind as well as any saved pointer.
+// One screen or split screen (+0x9C, the viewports: 1 or 2).
 static bool RaceSetupMatches(const BYTE* setup)
 {
     __try {
         if (!setup || !s_committedTrack[0]) return false;
         const BYTE* career = *(const BYTE* const*)0x00D64E40;
         int type = *(const int*)setup;
+        int viewports = *(const int*)(setup + 0x9C);
         const char* mode = *(const char* const*)(setup + 0x988);
         const char* sub = *(const char* const*)(setup + 0x1E0);
         char track[48];
-        if (!career || career[8] || type == 6 || type == 7 || setup[0x9B2] ||
-            *(const int*)(setup + 0x9C) != 1 || !mode || _stricmp(mode, "QuickRace.params") || !sub ||
+        if (!career || career[8] || type == 6 || type == 7 || setup[0x9B2] || (viewports != 1 && viewports != 2) ||
+            !mode || _stricmp(mode, "QuickRace.params") || !sub ||
             _snprintf_s(track, _TRUNCATE, "%s_%s", (const char*)(setup + 0xE0), sub) < 0)
             return false;
         return !_stricmp(track, s_committedTrack);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
+    }
+}
+
+// A network Race (setup kinds 6 and 7, the game's multiplayer setups; 0x43FFCB caps their laps at 8) in a
+// SteamLAN session.
+static bool NetworkRaceSetup(const BYTE* setup)
+{
+    __try {
+        if (!setup) return false;
+        const int type = *(const int*)setup;
+        const char* mode = *(const char* const*)(setup + 0x988);
+        return (type == 6 || type == 7) && mode && !_stricmp(mode, "QuickRace.params");
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+static bool ChangedSetupMatches(const BYTE* setup)
+{
+    return s_changedNetwork ? NetworkRaceSetup(setup) : RaceSetupMatches(setup);
+}
+
+// a pick that the race did not take, once per setup (the log shows which part of the setup differs)
+static void NoteSetupMismatch(const BYTE* setup)
+{
+    static const BYTE* noted;
+    if (!g_cfg.log || setup == noted) return;
+    noted = setup;
+    __try {
+        const char* mode = *(const char* const*)(setup + 0x988);
+        const char* sub = *(const char* const*)(setup + 0x1E0);
+        Log("laps: %d picked for %s, but this race is %s_%s, kind %d, %d viewport(s), mode %s, flag %d: the game's laps",
+            s_pickLaps, s_committedTrack, (const char*)(setup + 0xE0), sub ? sub : "?", *(const int*)setup,
+            *(const int*)(setup + 0x9C), mode ? mode : "?", setup[0x9B2]);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
     }
 }
 
@@ -121,27 +167,42 @@ static bool ReadLapPair(BYTE* flag, int* count, int* stock)
 
 static void __fastcall Hook_LapsReset(BYTE* self, void*, void* context)
 {
-    BYTE* setup = s_installed ? LapsSetup(self) : NULL;
+    BYTE* setup = s_raceHooks ? LapsSetup(self) : NULL;
+    int want = 0;
+    bool network = false;
+    if (setup && OnlineSession()) {
+        // a SteamLAN session: the session's laps, on every PC the same (the game caps them at 8 after the override)
+        if (g_cfg.sessionLaps > 0 && NetworkRaceSetup(setup)) {
+            want = g_cfg.sessionLaps > 8 ? 8 : g_cfg.sessionLaps;
+            network = true;
+        }
+    } else if (setup && s_installed && s_pickLaps) {
+        if (RaceSetupMatches(setup)) want = s_pickLaps;
+        else NoteSetupMismatch(setup);
+    }
     BYTE flag;
     int count, stock;
-    if (!setup || !s_pickLaps || !RaceSetupMatches(setup) || OnlineSession() ||
-        !ReadLapPair(&flag, &count, &stock) || stock == s_pickLaps || !ReplacementKeyAbsent(setup)) {
+    if (!want || !ReadLapPair(&flag, &count, &stock) || stock == want || !ReplacementKeyAbsent(setup)) {
         s_origLapsReset(self, context);
         return;
     }
     // Reset consumes this pair synchronously at 0x43FFAF. It is called for each car and again on Restart.
     // Restore both values together before leaving; the menu's request stays armed until it is left.
     __try {
-        *kLapCount = s_pickLaps;
+        *kLapCount = want;
         *kLapOverride = 1;
         s_origLapsReset(self, context);
     } __finally {
         *kLapOverride = flag;
         *kLapCount = count;
     }
-    if (s_changedSetup != setup)
-        Log("laps: %d per race (stock %d, %s)", s_pickLaps, stock, s_committedTrack);
+    if (s_changedSetup != setup) {
+        if (network) Log("laps: %d per race in the LAN session (stock %d, the session's rules)", want, stock);
+        else Log("laps: %d per race (stock %d, %s)", want, stock, s_committedTrack);
+    }
     s_changedSetup = setup;
+    s_changedNetwork = network;
+    s_changedLaps = want;
 }
 
 static BYTE* ResultsSetup(BYTE* self)
@@ -189,7 +250,7 @@ static void __fastcall Hook_ResultsUpdate(BYTE* self, void*, float dt)
     // Protect the whole call so a callback cannot move the store ahead of the rejection.
     // The writer rejects unknown keys at 0x795B88, before changing the profile or holder.
     const char* original;
-    if (!RaceSetupMatches(setup) || !ReplacementKeyAbsent(setup) || !SubstituteRecordMode(setup, &original)) {
+    if (!ChangedSetupMatches(setup) || !ReplacementKeyAbsent(setup) || !SubstituteRecordMode(setup, &original)) {
         static bool logged;
         if (!logged) Log("lap choice: results held because the no-record key could not be verified");
         logged = true;
@@ -335,10 +396,13 @@ static int DefaultLaps()
 
 // Only quick play's Race picks laps: Elimination ends with the field (its 8 laps are a ceiling), Detonator
 // is one timed lap, Survival, Air Strike and Air Revenge have no difficulty button to take over, and the DLC
-// modes keep their own rules. Reached from the main menu's Quick Play entry (not split screen, LAN or online).
+// modes keep their own rules. Reached from the main menu's Quick Play or Split Screen entry (both open the same
+// quick play screen, cNewQuickPlay); LAN and online pick on their own screens (a SteamLAN session takes the
+// host's pick, see the top).
 static bool RaceMode()
 {
-    return !_stricmp(s_mode, "QuickRace") && !strcmp(s_menuEntry, "TEXT_QUICKPLAY");
+    return !_stricmp(s_mode, "QuickRace") &&
+           (!strcmp(s_menuEntry, "TEXT_QUICKPLAY") || !strcmp(s_menuEntry, "TEXT_SPLIT_SCREEN"));
 }
 
 // dlcmode.cpp's mode list hook: the GameMode name of the highlighted quick play mode ("" when not readable)
@@ -629,11 +693,11 @@ bool LapMenuInvokeArgs(void* movie, const char* path, const GFxValue* args, unsi
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
     }
-    if (at < 0 || !MovieIs(movie, "RaceEnd.gfx") || !RaceSetupMatches(s_changedSetup)) return false;
+    if (at < 0 || !MovieIs(movie, "RaceEnd.gfx") || !ChangedSetupMatches(s_changedSetup)) return false;
     memcpy(out, args, count * sizeof(GFxValue));
     out[at].str = kNoRecordText;
     Log("lap choice: finish card: \"%s\" instead of the new personal best (%s, %d laps)", kNoRecordText,
-        path ? path : "?", s_pickLaps);
+        path ? path : "?", s_changedLaps);
     return true;
 }
 
@@ -673,7 +737,7 @@ static void SaveLaps(DWORD wait)
 }
 
 // 1, 2, ... 10, 1 in plain order; the game's own count stands for itself (Laps=0, the game's default).
-// Unknown default: the game's count, 1 ... 10, the game's count again.
+// Unknown default: the game's count, 1 ... 9, the game's count again.
 static void NextLaps()
 {
     int def = DefaultLaps();
@@ -747,54 +811,77 @@ bool LapMenuInstalled()
     return s_installed;
 }
 
+bool LapRaceHooksInstalled()
+{
+    return s_raceHooks;
+}
+
+// what this player's SteamLAN rules offer as a host: its lap pick, only with the lap choice in place
+int HostLaps()
+{
+    return s_installed && s_raceHooks && g_cfg.laps > 0 && g_cfg.laps <= kMaxIniLaps ? g_cfg.laps : 0;
+}
+
+// The race hooks (cLaps::Reset, cRaceResults::Update) go in with LapSelect=1 and with SteamLAN=1: a guest applies
+// the session's laps also without the lap choice of its own. The lap choice (the track select's button) only with
+// LapSelect=1; when it cannot go in, the race hooks stay only for SteamLAN.
 void InstallLapMenu()
 {
-    if (!g_cfg.lapSelect) return;
-    if (CurrentBuild() != BUILD_STEAM || g_cfg.steamLan || !(g_cfg.patchMask & PATCH_LAPS)) {
-        Log("lap choice: disabled by the build, SteamLAN, or PatchMask");
+    const bool lan = g_cfg.steamLan && (g_cfg.patchMask & PATCH_ONLINE);
+    if (!g_cfg.lapSelect && !lan) return;
+    if (CurrentBuild() != BUILD_STEAM || !(g_cfg.patchMask & PATCH_LAPS)) {
+        Log("lap choice: disabled by the build or PatchMask");
         return;
     }
-    if (!PadsWrapped() && !FrameHookInstalled()) {
-        Log("lap choice: no per-frame caller for prompt and save retries");
+    if (!RaceHooksReady()) {
+        Log("lap choice: race setup or results signature mismatch, no lap count applied");
         return;
     }
-    if (!BytesMatch((void*)0x00469CB0, "A10C4ED600578BF98B4808") ||
-        !BytesMatch((void*)0x00403010, "6AFF6838EEB200") || !BytesMatch((void*)0x00403080, "568BF18B4E04")) {
-        Log("lap choice: prompt bar or file API signature mismatch");
-        return;
-    }
-    if (!RaceHooksReady() || !QuickPlayInputReady() || !MenuHookReady() || !QuickPlayModeListReady() ||
-        !BytesMatch((void*)0x004867D1, "8B47048B401485C0") ||
-        !BytesMatch((void*)0x004867DF, "83B84002000000")) {
-        Log("lap choice: race setup, results, input or menu signature mismatch");
-        return;
-    }
-
-    s_origQuickPlayInput = (QuickPlayInput_t)kQuickPlayVtable[11];
     s_origResultsUpdate = (ResultsUpdate_t)kResultsVtable[3];
     s_origLapsReset = (LapsReset_t)kLapsVtable[2];
-    const struct { void** slot; void* original; void* replacement; } hooks[] = {
-        { &kQuickPlayVtable[11], (void*)s_origQuickPlayInput, (void*)Hook_QuickPlayInput },
-        { &kResultsVtable[3], (void*)s_origResultsUpdate, (void*)Hook_ResultsUpdate },
-        { &kLapsVtable[2], (void*)s_origLapsReset, (void*)Hook_LapsReset }
-    };
-    int written = 0;
-    for (; written < _countof(hooks); written++)
-        if (!WriteSlot(hooks[written].slot, hooks[written].replacement)) break;
-    if (written == _countof(hooks)) {
-        InstallMenuHook(true);
-        // Install the shared mode wrapper last, so failure needs no rollback of that slot.
-        if (MenuHookInstalled() && HookQuickPlayModeList()) {
-            s_fileApi = true;
-            s_installed = true;
-            Log("lap choice: Quick Play Race difficulty action picks laps (%d now, 0 = the game's)", g_cfg.laps);
-            return;
+    if (!WriteSlot(&kResultsVtable[3], (void*)Hook_ResultsUpdate)) {
+        Log("lap choice: results slot could not be written, no lap count applied");
+        return;
+    }
+    if (!WriteSlot(&kLapsVtable[2], (void*)Hook_LapsReset)) {
+        if (!WriteSlot(&kResultsVtable[3], (void*)s_origResultsUpdate)) Log("lap choice: results slot could not be restored");
+        Log("lap choice: lap slot could not be written, no lap count applied");
+        return;
+    }
+    s_raceHooks = true;
+    if (lan) Log("laps: in a SteamLAN session the session's Race laps apply on this PC (the host's pick)");
+
+    const char* why = NULL;
+    if (!g_cfg.lapSelect)
+        why = "";
+    else if (!PadsWrapped() && !FrameHookInstalled())
+        why = "no per-frame caller for prompt and save retries";
+    else if (!BytesMatch((void*)0x00469CB0, "A10C4ED600578BF98B4808") ||
+             !BytesMatch((void*)0x00403010, "6AFF6838EEB200") || !BytesMatch((void*)0x00403080, "568BF18B4E04"))
+        why = "prompt bar or file API signature mismatch";
+    else if (!QuickPlayInputReady() || !MenuHookReady() || !QuickPlayModeListReady() ||
+             !BytesMatch((void*)0x004867D1, "8B47048B401485C0") || !BytesMatch((void*)0x004867DF, "83B84002000000"))
+        why = "input or menu signature mismatch";
+    if (!why) {
+        s_origQuickPlayInput = (QuickPlayInput_t)kQuickPlayVtable[11];
+        if (WriteSlot(&kQuickPlayVtable[11], (void*)Hook_QuickPlayInput)) {
+            InstallMenuHook(true);
+            // Install the shared mode wrapper last, so failure needs no rollback of that slot.
+            if (MenuHookInstalled() && HookQuickPlayModeList()) {
+                s_fileApi = true;
+                s_installed = true;
+                Log("lap choice: Quick Play Race difficulty action picks laps, one screen and split screen (%d now, "
+                    "0 = the game's)", g_cfg.laps);
+                return;
+            }
+            RemoveLapMenuHook();
+            if (!WriteSlot(&kQuickPlayVtable[11], (void*)s_origQuickPlayInput)) Log("lap choice: input slot could not be restored");
         }
+        why = "prerequisite hook could not be installed";
     }
-    RemoveLapMenuHook();
-    while (written > 0) {
-        const auto& hook = hooks[--written];
-        if (!WriteSlot(hook.slot, hook.original)) Log("lap choice: slot %p could not be restored", (void*)hook.slot);
-    }
-    Log("lap choice: prerequisite hook could not be installed; no lap count applied");
+    if (*why) Log("lap choice: %s, no lap choice on the track select", why);
+    if (lan) return;  // the session's laps still apply
+    s_raceHooks = false;
+    if (!WriteSlot(&kLapsVtable[2], (void*)s_origLapsReset)) Log("lap choice: lap slot could not be restored");
+    if (!WriteSlot(&kResultsVtable[3], (void*)s_origResultsUpdate)) Log("lap choice: results slot could not be restored");
 }

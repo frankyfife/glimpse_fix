@@ -460,7 +460,8 @@ car select already does it right (alpha ZERO / blend factor, factor 0).
 
 ### Laps
 
-`LapSelect=1` changes the resolved difficulty action on offline Quick Play Race's track select.
+`LapSelect=1` changes the resolved difficulty action on offline Quick Play Race's track select
+(one screen or split screen: the Split Screen entry opens the same `cNewQuickPlay` screen).
 The input manager resolves action `0x21` into byte 3 of the UI action packet (0x4D628E).
 `cNewQuickPlay::OnInput` (vtable 0xBAFD34, slot 11, 0x47A170) takes that action only when the
 stock difficulty check (0x479C70) and locked-track check (0x4866A0) permit it. The game's
@@ -474,19 +475,31 @@ the game's open and close functions (0x403010 and 0x403080). The ArkLoader read 
 slots point to 0x5739A0 and 0x573A00. The WinFileLoader equivalents are 0x572850 and
 0x5727B0. The game keeps its own lap count when the default is unreadable.
 
-The main menu identifies Quick Play by `TEXT_QUICKPLAY`. The Quick Play mode list
+The main menu identifies Quick Play by `TEXT_QUICKPLAY` and split screen by `TEXT_SPLIT_SCREEN`. The Quick Play mode list
 (vtable 0xBB2360, slot 1, 0x4867B0) provides the internal name `QuickRace`.
 The observer takes selected rows only while their owning screen is in mode-select phase
 (`+0x240 == 0`). Moving to car select commits a track and requested count. Main menu,
 mode select, and a new track selection clear that request.
 
 `cLaps::Reset` (vtable 0xBA8DE8, slot 2, 0x43FF40, `__thiscall(context)`) checks the active setup for the same
-track, Quick Race mode, one player viewport, and offline non-Season play. It reads the game's
+track, Quick Race mode, one or two player viewports (+0x9C), and offline non-Season play. It reads the game's
 default at 0x43FFA5 or the override byte/count at 0x43FFAF–0x43FFBD. When the requested
 value differs from the live stock count, the hook sets the override byte (0xD6B6B5) and
 count (0xD090CC) for that call, then restores both. A setup that consumed changed laps is
 tracked through results. Restart can use the same committed choice, and Deadline's
 separate timer slot 4 remains independent. `LapSelect=0` leaves all counts to the game.
+
+A network race has no lap count of its own either: every PC's reset reads the same game data, and only
+the setup kinds 6 and 7 (the multiplayer setups) are then capped at 8 (0x43FFCB–0x43FFEB); nothing in the
+network code writes the override pair or the track default (0x441218 sets their initial values, the track
+overlay loader writes the default at 0x791DC8). With `SteamLAN=1` the session rules (`src/online.cpp`)
+carry the host's pick as `l=` in `glimpse_rules` / `glimpse_own`; every PC sets
+`sessionLaps` from them and the same reset hook applies it to a Quick Race network setup while the session
+lasts (at most 8, as the game would cap it). A member publishes `glimpse_lapok=1` when its race hooks are in;
+the host offers its pick only while every lobby member does, so a member that would keep the game's laps
+(an older version, the Russian depot) makes everybody keep them. The race hooks go in with `LapSelect=1` or
+`SteamLAN=1`, the lap choice only with `LapSelect=1`. With `SteamLAN=1` the Scaleform `Invoke` slot holds
+online.cpp's wrapper first; the menu hook wraps that one in turn.
 
 The stock results update (0x802AF0, vtable 0xC1F83C, slot 3) advances the movie, checks
 ready rows, then calls 0x802870. The writer builds `<track>_<sub>_<mode>` from the setup,
@@ -696,8 +709,8 @@ How the fix avoids it: **no game code is changed at all.** Everything works thro
   `Display` with `HDR=1`, `SMAA=1` (on by default) and `UltrawideFix=2`, its `SetViewport` with
   `UltrawideFix=2` or an active `HudResolution`, its `Invoke` with `SteamLAN=1`, its `Invoke` and `SetVariable` with
   `LapSelect=1` or `UiLog=1`, the Quick Play mode list's item update (`0xBB2364`) with
-  `LapSelect=1` or the DLC modes, Quick Play input (`0xBAFD60`), lap reset (`0xBA8DF0`)
-  and race results update (`0xC1F848`) with `LapSelect=1`,
+  `LapSelect=1` or the DLC modes, Quick Play input (`0xBAFD60`) with `LapSelect=1`, lap reset (`0xBA8DF0`)
+  and race results update (`0xC1F848`) with `LapSelect=1` or `SteamLAN=1`,
   `VolumeMeter` slot 9 at `0xC1E028` with `Ducking=1`,
   `Flanger` slot 9 at `0xC1DE54` with `PowerPlayFlanger=1`,
   `VoiceDSP` slot 9 at `0xC32824` with `SoundPlacement=1`,

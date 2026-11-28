@@ -36,7 +36,8 @@ within 15 seconds. A full lobby (8 players) makes the next player open a second 
 * In the game choose *LAN*, then create a game or search for one. Several games can run in one lobby.
 * The player who creates a game is its host: the host's mode and track apply, and so do the host's
   settings for boost, handbrake, power bar fill, AI boost and respot time (`WreckTime`), for everyone
-  in that game. A guest uses its own buttons and keys for them, also when it has them off itself; when
+  in that game, and its lap pick (`LapSelect`, up to 8 laps) for Race, once every player in the lobby
+  runs a glimpse_fix that takes it. A guest uses its own buttons and keys for them, also when it has them off itself; when
   the boost or handbrake button is Y, the game's camera change moves to D-pad down.
 * A banner at the top left shows the lobby, the players (2/8), the game mode and whose rules apply.
   The photo mode is a free camera there; the race goes on. The lobby name and the mode are also in
