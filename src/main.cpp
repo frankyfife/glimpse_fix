@@ -422,6 +422,7 @@ BOOL WINAPI DllMain(HINSTANCE inst, DWORD reason, LPVOID)
         InitializeCriticalSection(&s_logLock);
         LoadConfig();
         StartSaveBackup();  // a thread: runs once the loader is done, long before the title screen loads a profile
+        if (g_cfg.log) IoLogKernel32Exports();  // diagnostic (#16, Wine/Proton): reads only, before any slot swap
         DlcInstall();  // before the game's first read of resident.ark
         FixOpponentEngineBanks();  // plain data in the exe file, read when the audio system starts
         FixReverbPresets();        // fmod_event.dll is mapped already (an import of the exe)

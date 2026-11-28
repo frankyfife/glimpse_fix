@@ -149,6 +149,7 @@ void Log(const char* fmt, ...);
 #define GLIMPSE_VERSION "2.3.0-beta.4"  // keep in step with config/glimpse_config.rc
 void LogEnvironment();                     // system, executable, files and modules, at start
 void LogForeignModules(const char* when);  // modules loaded from outside the Windows folder
+void IoLogKernel32Exports();  // iohook.cpp, Log=1: what kernel32's file exports look like (#16, reads only)
 void ModulePath(char* out, const char* file);  // file next to the DLL (game folder)
 void DumpMark(const char* what);  // frame dump (diag.cpp): a note in the dumped frame's log
 
